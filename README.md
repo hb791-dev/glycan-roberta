@@ -80,6 +80,13 @@ MyDrive/ProjectRoot2/
 │   │       └── tokenizer_config_summary.json
 │   ├── hybrid_char_bpe/
 │   └── manual/
+│       └── v1_train_only/
+│           ├── vocab.json
+│           ├── tokenizer.json
+│           ├── tokenizer_config.json
+│           ├── special_tokens_map.json
+│           ├── inspection_preview.csv
+│           └── tokenizer_config_summary.json
 ├── tokenized_datasets/
 │   ├── byte_bpe/
 │   ├── hybrid_char_bpe/
@@ -145,6 +152,23 @@ Outputs:
 - `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/special_tokens_map.json`
 - `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/inspection_preview.csv`
 - `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/tokenizer_config_summary.json`
+
+### `02c_manual_gen2.ipynb`
+
+Purpose:
+- build the manual tokenizer from the training split using the glycan parser
+- save a fixed word-level vocabulary and matching Hugging Face tokenizer
+
+Input:
+- `MyDrive/ProjectRoot2/data/splits/train.txt`
+
+Outputs:
+- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/vocab.json`
+- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/tokenizer.json`
+- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/tokenizer_config.json`
+- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/special_tokens_map.json`
+- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/inspection_preview.csv`
+- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/tokenizer_config_summary.json`
 
 ### `02_tokenizer_generation/*2.ipynb`
 
@@ -249,8 +273,9 @@ What is already in place:
 - notebook `00_data_exploration2.ipynb` rebuilt and tested
 - notebook `01_data_splitting2.ipynb` rebuilt and tested
 - notebook `02a_byte_bpe_gen2.ipynb` rebuilt and tested
+- notebook `02c_manual_gen2.ipynb` rebuilt and tested
 
 What is next:
-- rebuild the remaining tokenizer notebooks
+- rebuild the remaining tokenizer notebook
 - continue notebook-by-notebook through preprocessing,
   training, validation, and test evaluation
