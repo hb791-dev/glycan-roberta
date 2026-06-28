@@ -60,8 +60,14 @@ glycan-roberta-project2/
 ```text
 MyDrive/ProjectRoot2/
 ├── data/
-│   └── raw/
-│       └── raw_glycans_dataset_no_aldi.txt
+│   ├── raw/
+│   │   └── raw_glycans_dataset_no_aldi.txt
+│   └── splits/
+│       ├── train.txt
+│       ├── val.txt
+│       ├── test.txt
+│       ├── split_summary.csv
+│       └── split_preview.csv
 ├── tokenizers/
 │   ├── byte_bpe/
 │   ├── hybrid_char_bpe/
@@ -105,10 +111,15 @@ Outputs:
 Purpose:
 - create the train, validation, and test splits from the raw dataset
 
-Planned outputs:
-- `train.txt`
-- `val.txt`
-- `test.txt`
+Input:
+- `MyDrive/ProjectRoot2/data/raw/raw_glycans_dataset_no_aldi.txt`
+
+Outputs:
+- `MyDrive/ProjectRoot2/data/splits/train.txt`
+- `MyDrive/ProjectRoot2/data/splits/val.txt`
+- `MyDrive/ProjectRoot2/data/splits/test.txt`
+- `MyDrive/ProjectRoot2/data/splits/split_summary.csv`
+- `MyDrive/ProjectRoot2/data/splits/split_preview.csv`
 
 ### `02_tokenizer_generation/*2.ipynb`
 
@@ -214,8 +225,8 @@ What is already in place:
 - new Drive root created
 - `src/` migrated and cleaned
 - notebook `00_data_exploration2.ipynb` rebuilt and tested
+- notebook `01_data_splitting2.ipynb` rebuilt and tested
 
 What is next:
-- rebuild `01_data_splitting2.ipynb`
 - continue notebook-by-notebook through tokenizer generation, preprocessing,
   training, validation, and test evaluation
