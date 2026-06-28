@@ -1,0 +1,22 @@
+{
+  "experiment_name": "mlm15_L6_H512_A8_lr00001_ep100",
+  "vault_routing": {
+    "dataset_dir": "/content/drive/MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2",
+    "tokenizer_dir": "/content/drive/MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2",
+    "checkpoint_dir": "/content/drive/MyDrive/ProjectRoot2/checkpoints/byte_bpe/mlm15_L6_H512_A8_lr00001_ep100"
+  },
+  "live_hyperparameters": {
+    "tokenizer_family": "byte_bpe",
+    "setting_label": "v300_m2",
+    "mlm_probability": 0.15,
+    "num_hidden_layers": 6,
+    "attention_heads": 8,
+    "hidden_size": 512,
+    "intermediate_size": 2048,
+    "batch_size": 32,
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "epochs": 100,
+    "run_mode": "fresh"
+  }
+}
