@@ -70,6 +70,14 @@ MyDrive/ProjectRoot2/
 │       └── split_preview.csv
 ├── tokenizers/
 │   ├── byte_bpe/
+│   │   └── v300_m2/
+│   │       ├── vocab.json
+│   │       ├── merges.txt
+│   │       ├── tokenizer.json
+│   │       ├── tokenizer_config.json
+│   │       ├── special_tokens_map.json
+│   │       ├── inspection_preview.csv
+│   │       └── tokenizer_config_summary.json
 │   ├── hybrid_char_bpe/
 │   └── manual/
 ├── tokenized_datasets/
@@ -121,12 +129,26 @@ Outputs:
 - `MyDrive/ProjectRoot2/data/splits/split_summary.csv`
 - `MyDrive/ProjectRoot2/data/splits/split_preview.csv`
 
-### `02_tokenizer_generation/*2.ipynb`
+### `02a_byte_bpe_gen2.ipynb`
 
 Purpose:
-- generate tokenizer artifacts for each tokenizer family
+- train the byte-level BPE baseline tokenizer
 
-Tokenizer families:
+Input:
+- `MyDrive/ProjectRoot2/data/splits/train.txt`
+
+Outputs:
+- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/vocab.json`
+- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/merges.txt`
+- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/tokenizer.json`
+- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/tokenizer_config.json`
+- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/special_tokens_map.json`
+- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/inspection_preview.csv`
+- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/tokenizer_config_summary.json`
+
+### `02_tokenizer_generation/*2.ipynb`
+
+Tokenizer families covered in this stage:
 - `byte_bpe`
 - `hybrid_char_bpe`
 - `manual`
@@ -226,7 +248,9 @@ What is already in place:
 - `src/` migrated and cleaned
 - notebook `00_data_exploration2.ipynb` rebuilt and tested
 - notebook `01_data_splitting2.ipynb` rebuilt and tested
+- notebook `02a_byte_bpe_gen2.ipynb` rebuilt and tested
 
 What is next:
-- continue notebook-by-notebook through tokenizer generation, preprocessing,
+- rebuild the remaining tokenizer notebooks
+- continue notebook-by-notebook through preprocessing,
   training, validation, and test evaluation
