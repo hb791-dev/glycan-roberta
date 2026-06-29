@@ -142,6 +142,21 @@ MyDrive/ProjectRoot2/
 ├── results/
 │   ├── exploration/
 │   ├── validation/
+│   │   ├── byte_bpe/
+│   │   │   └── <experiment_name>/
+│   │   │       ├── loss_curves.png
+│   │   │       ├── loss_history.csv
+│   │   │       └── validation_summary.json
+│   │   ├── hybrid_char_bpe/
+│   │   │   └── mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/
+│   │   │       ├── loss_curves.png
+│   │   │       ├── loss_history.csv
+│   │   │       └── validation_summary.json
+│   │   └── manual/
+│   │       └── <experiment_name>/
+│   │           ├── loss_curves.png
+│   │           ├── loss_history.csv
+│   │           └── validation_summary.json
 │   ├── test_evaluation/
 │   └── qualitative_probes/
 └── registry/
@@ -305,6 +320,23 @@ Purpose:
 - support continuation decisions
 - save validation summaries
 
+Inputs:
+- `trainer_state.json` from one experiment folder in `MyDrive/ProjectRoot2/checkpoints/`
+- `experiment_metadata.json` from that same experiment folder
+- `MyDrive/ProjectRoot2/registry/run_index.csv`
+
+Outputs:
+- `MyDrive/ProjectRoot2/results/validation/byte_bpe/<experiment_name>/loss_curves.png`
+- `MyDrive/ProjectRoot2/results/validation/byte_bpe/<experiment_name>/loss_history.csv`
+- `MyDrive/ProjectRoot2/results/validation/byte_bpe/<experiment_name>/validation_summary.json`
+- `MyDrive/ProjectRoot2/results/validation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/loss_curves.png`
+- `MyDrive/ProjectRoot2/results/validation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/loss_history.csv`
+- `MyDrive/ProjectRoot2/results/validation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/validation_summary.json`
+- `MyDrive/ProjectRoot2/results/validation/manual/<experiment_name>/loss_curves.png`
+- `MyDrive/ProjectRoot2/results/validation/manual/<experiment_name>/loss_history.csv`
+- `MyDrive/ProjectRoot2/results/validation/manual/<experiment_name>/validation_summary.json`
+- updated `MyDrive/ProjectRoot2/registry/run_index.csv`
+
 ### `06_test_set_evaluation2.ipynb`
 
 Purpose:
@@ -385,6 +417,7 @@ What is already in place:
 - notebook `02d_hybrid_char_bpe_gen2.ipynb` rebuilt and tested
 - notebook `03_dataset_preprocessing2.ipynb` rebuilt and tested for all three tokenizers
 - notebook `04_roberta_pretraining2.ipynb` rebuilt and tested for hybrid character-BPE
+- notebook `05_validation_diagnostics2.ipynb` rebuilt and tested for hybrid character-BPE
 
 What is next:
 - continue notebook-by-notebook through preprocessing,
