@@ -22,7 +22,6 @@ This rebuild uses a split-storage workflow.
   - notebooks
   - helper scripts
   - templates
-  - documentation
 - Google Drive:
   - raw data
   - train-validation-test splits
@@ -34,12 +33,15 @@ This rebuild uses a split-storage workflow.
 
 The intended Drive root is:
 
-- `MyDrive/FolderName/`
+- `MyDrive/ProjectRoot/`
+
+The notebooks default to `MyDrive/ProjectRoot/` for Drive storage.
+If you already have an older `MyDrive/ProjectRoot2/` folder, the setup cells will still fall back to it automatically.
 
 ## Repository Layout
 
 ```text
-ProjectFolderName/
+glycan-roberta/
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
@@ -68,7 +70,7 @@ ProjectFolderName/
 ## Expected Drive Layout
 
 ```text
-MyDrive/FolderName/
+MyDrive/ProjectRoot/
 ├── data/
 │   ├── raw/
 │   │   └── raw_glycans_dataset_no_aldi.txt

@@ -1,9 +1,9 @@
 {
   "experiment_name": "mlm15_L6_H512_A8_lr00001_ep100",
   "vault_routing": {
-    "dataset_dir": "/content/drive/MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2",
-    "tokenizer_dir": "/content/drive/MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2",
-    "checkpoint_dir": "/content/drive/MyDrive/ProjectRoot2/checkpoints/byte_bpe/mlm15_L6_H512_A8_lr00001_ep100"
+    "dataset_dir": "/content/drive/MyDrive/ProjectRoot/tokenized_datasets/byte_bpe/v300_m2",
+    "tokenizer_dir": "/content/drive/MyDrive/ProjectRoot/tokenizers/byte_bpe/v300_m2",
+    "checkpoint_dir": "/content/drive/MyDrive/ProjectRoot/checkpoints/byte_bpe/mlm15_L6_H512_A8_lr00001_ep100"
   },
   "live_hyperparameters": {
     "tokenizer_family": "byte_bpe",

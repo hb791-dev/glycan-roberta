@@ -1,4 +1,4 @@
-"""Helpers for maintaining the run index for GlycanProject2."""
+"""Helpers for maintaining the run index for the Drive-backed project folder."""
 
 from __future__ import annotations
 
