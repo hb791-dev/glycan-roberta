@@ -48,6 +48,25 @@ def plot_loss_curves(train_rows: pd.DataFrame, eval_rows: pd.DataFrame) -> None:
     plt.show()
 
 
+def save_loss_curve_plot(
+    train_rows: pd.DataFrame,
+    eval_rows: pd.DataFrame,
+    output_path: str,
+) -> None:
+    """Save the training and validation loss plot to disk."""
+    plt.figure(figsize=(8, 5))
+    plt.plot(train_rows["epoch"], train_rows["train_loss"], label="Training loss")
+    plt.plot(eval_rows["epoch"], eval_rows["val_loss"], label="Validation loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training and validation loss")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+
 def summarize_best_epoch(eval_rows: pd.DataFrame) -> dict:
     """Return the best and final validation checkpoints from one run."""
     best_idx = eval_rows["val_loss"].idxmin()
@@ -84,3 +103,8 @@ def recommend_continuation(
         return "Continuation is worth considering."
 
     return "Continuation is probably not necessary."
+
+
+def merge_loss_history(train_rows: pd.DataFrame, eval_rows: pd.DataFrame) -> pd.DataFrame:
+    """Combine training and validation loss tables on epoch for export."""
+    return pd.merge(train_rows, eval_rows, on="epoch", how="outer").sort_values("epoch")
