@@ -261,22 +261,24 @@ def compute_summary_classification_metrics(y_true, y_pred) -> dict:
 
 def compute_per_class_metrics(y_true, y_pred, tokenizer) -> pd.DataFrame:
     """Compute per-class precision, recall, F1, and support."""
+    class_ids = np.unique(y_true)
+
     per_class_precision, per_class_recall, per_class_f1, per_class_support = (
         precision_recall_fscore_support(
             y_true,
             y_pred,
+            labels=class_ids,
             average=None,
             zero_division=0,
         )
     )
 
-    observed_class_ids = np.unique(y_true)
-    observed_class_tokens = tokenizer.convert_ids_to_tokens(observed_class_ids.tolist())
+    class_tokens = tokenizer.convert_ids_to_tokens(class_ids.tolist())
 
     return pd.DataFrame(
         {
-            "token_id": observed_class_ids,
-            "token": observed_class_tokens,
+            "token_id": class_ids,
+            "token": class_tokens,
             "precision": per_class_precision,
             "recall": per_class_recall,
             "f1": per_class_f1,
