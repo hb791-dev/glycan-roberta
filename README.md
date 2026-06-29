@@ -44,16 +44,16 @@ ProjectFolderName/
 ├── requirements.txt
 ├── .gitignore
 ├── notebooks/
-│   ├── 00_data_exploration2.ipynb
-│   ├── 01_data_splitting2.ipynb
+│   ├── 00_data_exploration.ipynb
+│   ├── 01_data_splitting.ipynb
 │   ├── 02_tokenizer_generation/
-│   │   ├── 02a_byte_bpe_gen2.ipynb
-│   │   ├── 02c_manual_gen2.ipynb
-│   │   └── 02d_hybrid_char_bpe_gen2.ipynb
-│   ├── 03_dataset_preprocessing2.ipynb
-│   ├── 04_roberta_pretraining2.ipynb
-│   ├── 05_validation_diagnostics2.ipynb
-│   └── 06_test_set_evaluation2.ipynb
+│   │   ├── 02a_byte_bpe_gen.ipynb
+│   │   ├── 02c_manual_gen.ipynb
+│   │   └── 02d_hybrid_char_bpe_gen.ipynb
+│   ├── 03_dataset_preprocessing.ipynb
+│   ├── 04_roberta_pretraining.ipynb
+│   ├── 05_validation_diagnostics.ipynb
+│   └── 06_test_set_evaluation.ipynb
 ├── src/
 │   ├── data_utils.py
 │   ├── run_index.py
@@ -100,7 +100,7 @@ MyDrive/FolderName/
 
 ## Notebook Workflow
 
-### `00_data_exploration2.ipynb`
+### `00_data_exploration.ipynb`
 
 Purpose:
 - inspect the raw glycan dataset
@@ -112,7 +112,7 @@ Main outputs:
 - example sequences CSV
 - sequence-length distribution plot
 
-### `01_data_splitting2.ipynb`
+### `01_data_splitting.ipynb`
 
 Purpose:
 - create the train-validation-test split from the raw dataset
@@ -124,7 +124,7 @@ Main outputs:
 - `split_summary.csv`
 - `split_preview.csv`
 
-### `02a_byte_bpe_gen2.ipynb`
+### `02a_byte_bpe_gen.ipynb`
 
 Purpose:
 - train the byte-level BPE tokenizer on the training split
@@ -135,7 +135,7 @@ Main outputs:
 - inspection preview
 - tokenizer configuration summary
 
-### `02c_manual_gen2.ipynb`
+### `02c_manual_gen.ipynb`
 
 Purpose:
 - build the manual glycan tokenizer from the training split
@@ -147,7 +147,7 @@ Main outputs:
 - inspection preview
 - tokenizer configuration summary
 
-### `02d_hybrid_char_bpe_gen2.ipynb`
+### `02d_hybrid_char_bpe_gen.ipynb`
 
 Purpose:
 - train a hybrid char-BPE tokenizer restricted to the character inventory
@@ -160,7 +160,7 @@ Main outputs:
 - inspection preview
 - tokenizer configuration summary
 
-### `03_dataset_preprocessing2.ipynb`
+### `03_dataset_preprocessing.ipynb`
 
 Purpose:
 - tokenize the train, validation, and test splits with one selected tokenizer
@@ -173,7 +173,7 @@ Main outputs:
 - `tokenization_preview.csv`
 - `preprocessing_summary.json`
 
-### `04_roberta_pretraining2.ipynb`
+### `04_roberta_pretraining.ipynb`
 
 Purpose:
 - pretrain a RoBERTa masked-language model on the tokenized training split
@@ -192,7 +192,7 @@ Notes:
 - validation in this notebook is for training-time diagnostics, not final
   model comparison
 
-### `05_validation_diagnostics2.ipynb`
+### `05_validation_diagnostics.ipynb`
 
 Purpose:
 - review training and validation loss after notebook 4
@@ -203,7 +203,7 @@ Main outputs:
 - `loss_history.csv`
 - `validation_summary.json`
 
-### `06_test_set_evaluation2.ipynb`
+### `06_test_set_evaluation.ipynb`
 
 Purpose:
 - evaluate a saved `best_model` on the held-out test split
