@@ -158,6 +158,39 @@ MyDrive/ProjectRoot2/
 │   │           ├── loss_history.csv
 │   │           └── validation_summary.json
 │   ├── test_evaluation/
+│   │   ├── byte_bpe/
+│   │   │   └── <experiment_name>/
+│   │   │       ├── masking_summary.csv
+│   │   │       ├── test_summary.json
+│   │   │       ├── test_summary_row.csv
+│   │   │       ├── per_class_metrics.csv
+│   │   │       ├── roc_curves.png
+│   │   │       ├── roc_auc_summary.csv
+│   │   │       ├── pr_curves.png
+│   │   │       ├── pr_auc_summary.csv
+│   │   │       └── qualitative_probe_results.csv
+│   │   ├── hybrid_char_bpe/
+│   │   │   └── mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/
+│   │   │       ├── masking_summary.csv
+│   │   │       ├── test_summary.json
+│   │   │       ├── test_summary_row.csv
+│   │   │       ├── per_class_metrics.csv
+│   │   │       ├── roc_curves.png
+│   │   │       ├── roc_auc_summary.csv
+│   │   │       ├── pr_curves.png
+│   │   │       ├── pr_auc_summary.csv
+│   │   │       └── qualitative_probe_results.csv
+│   │   └── manual/
+│   │       └── <experiment_name>/
+│   │           ├── masking_summary.csv
+│   │           ├── test_summary.json
+│   │           ├── test_summary_row.csv
+│   │           ├── per_class_metrics.csv
+│   │           ├── roc_curves.png
+│   │           ├── roc_auc_summary.csv
+│   │           ├── pr_curves.png
+│   │           ├── pr_auc_summary.csv
+│   │           └── qualitative_probe_results.csv
 │   └── qualitative_probes/
 └── registry/
     └── run_index.csv
@@ -341,8 +374,53 @@ Outputs:
 
 Purpose:
 - evaluate the saved best model on held-out test data
-- compute masked-token prediction metrics
+- compute masked-token prediction metrics on a deterministic masked test set
 - save test metrics, plots, and qualitative probe outputs
+- compare biological concepts in a tokenizer-specific way rather than forcing
+  identical token boundaries across vocabularies
+
+Inputs:
+- `best_model/` from one experiment folder in `MyDrive/ProjectRoot2/checkpoints/`
+- `test_dataset.pt` from the matching tokenizer setting in
+  `MyDrive/ProjectRoot2/tokenized_datasets/`
+- `MyDrive/ProjectRoot2/registry/run_index.csv`
+
+Outputs:
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/masking_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/test_summary.json`
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/test_summary_row.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/per_class_metrics.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/roc_curves.png`
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/roc_auc_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/pr_curves.png`
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/pr_auc_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/qualitative_probe_results.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/masking_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/test_summary.json`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/test_summary_row.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/per_class_metrics.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/roc_curves.png`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/roc_auc_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/pr_curves.png`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/pr_auc_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/qualitative_probe_results.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/masking_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/test_summary.json`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/test_summary_row.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/per_class_metrics.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/roc_curves.png`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/roc_auc_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/pr_curves.png`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/pr_auc_summary.csv`
+- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/qualitative_probe_results.csv`
+- updated `MyDrive/ProjectRoot2/registry/run_index.csv`
+
+Interpretation notes:
+- top-1, top-3, precision, recall, sensitivity, and specificity are computed
+  from masked-token prediction on the held-out test split
+- ROC and precision-recall plots use tokenizer-specific token lists
+- qualitative probes use shared biological sequences but tokenizer-specific
+  masking targets and expected tokens
 
 ## Colab and GitHub Workflow
 

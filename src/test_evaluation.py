@@ -126,6 +126,20 @@ def build_masked_test_dataset(
     }
 
 
+def build_masking_summary(masked_dataset_dict, mlm_probability: float, mask_seed: int) -> pd.DataFrame:
+    """Summarize the deterministic masking used for held-out test evaluation."""
+    labels = masked_dataset_dict["labels"]
+    masked_positions = int((labels != -100).sum().item())
+    test_sequences = int(labels.shape[0])
+
+    return pd.DataFrame(
+        {
+            "metric": ["test_sequences", "masked_positions", "mlm_probability", "mask_seed"],
+            "value": [test_sequences, masked_positions, mlm_probability, mask_seed],
+        }
+    )
+
+
 def run_mlm_test_predictions(model, masked_dataset_dict, batch_size: int, device):
     """Run MLM predictions on the masked test set.
 
@@ -386,64 +400,166 @@ def build_test_summary_row(
 
 
 def get_core_probe_cases():
-    """Return shared biological probe cases for qualitative inspection."""
+    """Return biological probe cases with tokenizer-specific masking targets."""
     return [
         {
-            "probe_id": "glcnac_scaffold_1",
-            "concept": "GlcNAc in a common N-glycan scaffold",
+            "probe_id": "glcnac_core",
+            "concept": "GlcNAc in an N-glycan core context",
             "base_sequence": "Galb1-4GlcNAcb1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
-            "expected_token": "GlcNAc",
-            "masked_sequences": {
-                "byte_bpe": "Galb1-4<mask>b1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
-                "hybrid_char_bpe": "Galb1-4<mask>b1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
-                "manual": "Galb1-4<mask>b1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
+            "biological_target": "GlcNAc",
+            "tokenizer_targets": {
+                "manual": {
+                    "masked_sequence": "Galb1-4<mask>b1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
+                    "expected_token": "GlcNAc",
+                    "target_token_type": "residue",
+                },
+                "hybrid_char_bpe": {
+                    "masked_sequence": "Galb1-4<mask>b1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
+                    "expected_token": "GlcNAc",
+                    "target_token_type": "merged_residue",
+                },
+                "byte_bpe": {
+                    "masked_sequence": "Galb1-4<mask>b1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
+                    "expected_token": "GlcNAc",
+                    "target_token_type": "byte_bpe_residue",
+                },
             },
         },
         {
-            "probe_id": "gal_branch_1",
-            "concept": "Gal in a branched antenna context",
+            "probe_id": "gal_terminal",
+            "concept": "Terminal Gal in antenna context",
             "base_sequence": "NeuAca2-3Galb1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
-            "expected_token": "Gal",
-            "masked_sequences": {
-                "byte_bpe": "NeuAca2-3<mask>b1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
-                "hybrid_char_bpe": "NeuAca2-3<mask>b1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
-                "manual": "NeuAca2-3<mask>b1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
+            "biological_target": "Gal",
+            "tokenizer_targets": {
+                "manual": {
+                    "masked_sequence": "NeuAca2-3<mask>b1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
+                    "expected_token": "Gal",
+                    "target_token_type": "residue",
+                },
+                "hybrid_char_bpe": {
+                    "masked_sequence": "NeuAca2-3<mask>b1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
+                    "expected_token": "Gal",
+                    "target_token_type": "merged_residue",
+                },
+                "byte_bpe": {
+                    "masked_sequence": "NeuAca2-3<mask>b1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
+                    "expected_token": "Gal",
+                    "target_token_type": "byte_bpe_residue",
+                },
             },
         },
         {
-            "probe_id": "man_core_1",
+            "probe_id": "mannose_core",
             "concept": "Man in the mannose core",
             "base_sequence": "Mana1-6(Mana1-3)Manb1-4GlcNAcb1-4GlcNAc",
-            "expected_token": "Man",
-            "masked_sequences": {
-                "byte_bpe": "Mana1-6(Mana1-3)<mask>b1-4GlcNAcb1-4GlcNAc",
-                "hybrid_char_bpe": "Mana1-6(Mana1-3)<mask>b1-4GlcNAcb1-4GlcNAc",
-                "manual": "Mana1-6(Mana1-3)<mask>b1-4GlcNAcb1-4GlcNAc",
+            "biological_target": "Man",
+            "tokenizer_targets": {
+                "manual": {
+                    "masked_sequence": "Mana1-6(Mana1-3)<mask>b1-4GlcNAcb1-4GlcNAc",
+                    "expected_token": "Man",
+                    "target_token_type": "residue",
+                },
+                "hybrid_char_bpe": {
+                    "masked_sequence": "Mana1-6(Mana1-3)<mask>b1-4GlcNAcb1-4GlcNAc",
+                    "expected_token": "Man",
+                    "target_token_type": "merged_residue",
+                },
+                "byte_bpe": {
+                    "masked_sequence": "Mana1-6(Mana1-3)<mask>1-4GlcNAcb1-4GlcNAc",
+                    "expected_token": "Manb",
+                    "target_token_type": "byte_bpe_residue_variant",
+                },
             },
         },
         {
-            "probe_id": "fuc_branch_1",
+            "probe_id": "fucose_branch",
             "concept": "Fuc in a fucosylated branch",
             "base_sequence": "Fuca1-3Galb1-4GlcNAcb1-6Man",
-            "expected_token": "Fuc",
-            "masked_sequences": {
-                "byte_bpe": "<mask>a1-3Galb1-4GlcNAcb1-6Man",
-                "hybrid_char_bpe": "<mask>a1-3Galb1-4GlcNAcb1-6Man",
-                "manual": "<mask>a1-3Galb1-4GlcNAcb1-6Man",
+            "biological_target": "Fuc",
+            "tokenizer_targets": {
+                "manual": {
+                    "masked_sequence": "<mask>a1-3Galb1-4GlcNAcb1-6Man",
+                    "expected_token": "Fuc",
+                    "target_token_type": "residue",
+                },
+                "hybrid_char_bpe": {
+                    "masked_sequence": "<mask>a1-3Galb1-4GlcNAcb1-6Man",
+                    "expected_token": "Fuc",
+                    "target_token_type": "merged_residue",
+                },
+                "byte_bpe": {
+                    "masked_sequence": "<mask>a1-3Galb1-4GlcNAcb1-6Man",
+                    "expected_token": "Fuc",
+                    "target_token_type": "byte_bpe_residue",
+                },
             },
         },
         {
-            "probe_id": "glc_context_1",
-            "concept": "Glc in a simple residue context",
-            "base_sequence": "Galb1-4GlcNAcb1-4Glc",
-            "expected_token": "Glc",
-            "masked_sequences": {
-                "byte_bpe": "Galb1-4GlcNAcb1-4<mask>",
-                "hybrid_char_bpe": "Galb1-4GlcNAcb1-4<mask>",
-                "manual": "Galb1-4GlcNAcb1-4<mask>",
+            "probe_id": "sialic_terminal",
+            "concept": "Terminal sialic acid context",
+            "base_sequence": "NeuAca2-3Galb1-4GlcNAc",
+            "biological_target": "sialic_acid",
+            "tokenizer_targets": {
+                "manual": {
+                    "masked_sequence": "<mask>a2-3Galb1-4GlcNAc",
+                    "expected_token": "NeuAc",
+                    "target_token_type": "residue",
+                },
+                "hybrid_char_bpe": {
+                    "masked_sequence": "<mask>Aca2-3Galb1-4GlcNAc",
+                    "expected_token": "Neu",
+                    "target_token_type": "subword_residue",
+                },
+                "byte_bpe": {
+                    "masked_sequence": "<mask>a2-3Galb1-4GlcNAc",
+                    "expected_token": "NeuAc",
+                    "target_token_type": "byte_bpe_residue",
+                },
             },
         },
     ]
+
+
+def get_tokenizer_specific_roc_pr_tokens():
+    """Return ROC and PR token candidates that make sense for each tokenizer."""
+    return {
+        "manual": [
+            "GlcNAc",
+            "Gal",
+            "Man",
+            "Fuc",
+            "NeuAc",
+            "GalNAc",
+            "Glc",
+            "GlcA",
+            "a1-3",
+            "b1-4",
+        ],
+        "hybrid_char_bpe": [
+            "GlcNAc",
+            "Gal",
+            "Man",
+            "Fuc",
+            "Neu",
+            "Glc",
+            "NAc",
+            "b1-4",
+            "b1-4GlcNAc",
+            "Galb1-4GlcNAc",
+        ],
+        "byte_bpe": [
+            "GlcNAc",
+            "Gal",
+            "Man",
+            "Fuc",
+            "NeuAc",
+            "GalNAc",
+            "Glc",
+            "GlcA",
+            "Galb",
+            "GlcNAcb",
+        ],
+    }
 
 
 def run_structured_qualitative_probe(model, tokenizer, tokenizer_family: str, probe_cases, device) -> pd.DataFrame:
@@ -459,25 +575,29 @@ def run_structured_qualitative_probe(model, tokenizer, tokenizer_family: str, pr
     rows = []
 
     for case in probe_cases:
-        masked_sequences = case.get("masked_sequences", {})
-        masked_sequence = masked_sequences.get(family)
+        target_info = case.get("tokenizer_targets", {}).get(family)
 
-        if masked_sequence is None:
+        if not target_info:
             continue
+
+        masked_sequence = target_info["masked_sequence"]
+        expected_token = target_info["expected_token"]
+        target_token_type = target_info.get("target_token_type", "")
 
         results = unmasker(masked_sequence)
 
         for rank, result in enumerate(results[:5], start=1):
             predicted_token = result["token_str"].strip()
-            expected_token = case["expected_token"]
 
             rows.append(
                 {
                     "probe_id": case["probe_id"],
                     "concept": case["concept"],
                     "base_sequence": case["base_sequence"],
+                    "biological_target": case["biological_target"],
                     "masked_sequence": masked_sequence,
                     "expected_token": expected_token,
+                    "target_token_type": target_token_type,
                     "rank": rank,
                     "predicted_token": predicted_token,
                     "score": result["score"],
