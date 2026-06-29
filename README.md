@@ -119,8 +119,26 @@ MyDrive/ProjectRoot2/
 │           └── preprocessing_summary.json
 ├── checkpoints/
 │   ├── byte_bpe/
+│   │   └── <experiment_name>/
+│   │       ├── best_model/
+│   │       ├── checkpoint-*/
+│   │       ├── logs/
+│   │       ├── experiment_metadata.json
+│   │       └── trainer_state.json
 │   ├── hybrid_char_bpe/
+│   │   └── mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/
+│   │       ├── best_model/
+│   │       ├── checkpoint-*/
+│   │       ├── logs/
+│   │       ├── experiment_metadata.json
+│   │       └── trainer_state.json
 │   └── manual/
+│       └── <experiment_name>/
+│           ├── best_model/
+│           ├── checkpoint-*/
+│           ├── logs/
+│           ├── experiment_metadata.json
+│           └── trainer_state.json
 ├── results/
 │   ├── exploration/
 │   ├── validation/
@@ -257,6 +275,29 @@ Purpose:
 - save checkpoints, `best_model`, trainer state, and experiment metadata
 - support fresh runs and continuation-style runs
 
+Inputs:
+- tokenizer files from one folder in `MyDrive/ProjectRoot2/tokenizers/`
+- tokenized datasets from one folder in `MyDrive/ProjectRoot2/tokenized_datasets/`
+- optional checkpoint or `best_model` folder for continuation runs
+
+Outputs:
+- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/best_model/`
+- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/checkpoint-*/`
+- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/logs/`
+- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/experiment_metadata.json`
+- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/trainer_state.json`
+- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/best_model/`
+- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/checkpoint-*/`
+- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/logs/`
+- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/experiment_metadata.json`
+- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/trainer_state.json`
+- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/best_model/`
+- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/checkpoint-*/`
+- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/logs/`
+- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/experiment_metadata.json`
+- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/trainer_state.json`
+- `MyDrive/ProjectRoot2/registry/run_index.csv`
+
 ### `05_validation_diagnostics2.ipynb`
 
 Purpose:
@@ -343,6 +384,7 @@ What is already in place:
 - notebook `02c_manual_gen2.ipynb` rebuilt and tested
 - notebook `02d_hybrid_char_bpe_gen2.ipynb` rebuilt and tested
 - notebook `03_dataset_preprocessing2.ipynb` rebuilt and tested for all three tokenizers
+- notebook `04_roberta_pretraining2.ipynb` rebuilt and tested for hybrid character-BPE
 
 What is next:
 - continue notebook-by-notebook through preprocessing,
