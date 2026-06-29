@@ -346,6 +346,10 @@ Outputs:
 - `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/trainer_state.json`
 - `MyDrive/ProjectRoot2/registry/run_index.csv`
 
+Notes:
+- this training-output pattern now exists for `byte_bpe`, `hybrid_char_bpe`, and `manual`
+- each completed run should end with `best_model/`, `trainer_state.json`, `experiment_metadata.json`, and the retained checkpoint folders
+
 ### `05_validation_diagnostics2.ipynb`
 
 Purpose:
@@ -369,6 +373,10 @@ Outputs:
 - `MyDrive/ProjectRoot2/results/validation/manual/<experiment_name>/loss_history.csv`
 - `MyDrive/ProjectRoot2/results/validation/manual/<experiment_name>/validation_summary.json`
 - updated `MyDrive/ProjectRoot2/registry/run_index.csv`
+
+Notes:
+- this validation-output pattern now exists for `byte_bpe`, `hybrid_char_bpe`, and `manual`
+- the validation notebook is only for training diagnostics and continuation decisions, not final model comparison
 
 ### `06_test_set_evaluation2.ipynb`
 
@@ -494,9 +502,13 @@ What is already in place:
 - notebook `02c_manual_gen2.ipynb` rebuilt and tested
 - notebook `02d_hybrid_char_bpe_gen2.ipynb` rebuilt and tested
 - notebook `03_dataset_preprocessing2.ipynb` rebuilt and tested for all three tokenizers
-- notebook `04_roberta_pretraining2.ipynb` rebuilt and tested for hybrid character-BPE
-- notebook `05_validation_diagnostics2.ipynb` rebuilt and tested for hybrid character-BPE
+- notebook `04_roberta_pretraining2.ipynb` rebuilt and run for all three tokenizers
+- notebook `05_validation_diagnostics2.ipynb` rebuilt and run for all three tokenizers
+- notebook `06_test_set_evaluation2.ipynb` rebuilt
+- tokenizer-specific held-out test evaluation helper implemented in `src/test_evaluation.py`
+- byte BPE, hybrid char-BPE, and manual training folders now all include `best_model/` and `trainer_state.json`
+- byte BPE, hybrid char-BPE, and manual validation folders now all include `loss_curves.png`, `loss_history.csv`, and `validation_summary.json`
 
 What is next:
-- continue notebook-by-notebook through preprocessing,
-  training, validation, and test evaluation
+- run notebook `06_test_set_evaluation2.ipynb` across the completed training runs
+- compare held-out test metrics across tokenizer and model variants
