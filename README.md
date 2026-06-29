@@ -1,38 +1,48 @@
-# glycan-roberta-project2
+# Glycan RoBERTa Project
 
-Clean rebuild of the glycan RoBERTa workflow.
+This repository contains a workflow for pretraining and evaluating
+RoBERTa-style masked-language models on glycan sequences.
 
-This repository is the rebuilt, colleague-facing version of the project. The
-original `glycan-roberta-project` repo and `MyDrive/ProjectRoot` Drive folder
-are preserved as legacy records and are not modified by this workflow.
+The project compares three tokenizer strategies:
+
+- `byte_bpe`
+- `manual`
+- `hybrid_char_bpe`
+
+The workflow is organized as a notebook pipeline with helper scripts in
+`src/`. Large artifacts such as dataset splits, trained tokenizers,
+tokenized datasets, checkpoints, and evaluation outputs are stored outside the
+repository in Google Drive.
 
 ## Project Split
 
 This rebuild uses a split-storage workflow.
 
-- GitHub repo: code, notebooks, templates, and documentation
-- Google Drive: raw data, generated splits, tokenizer artifacts, tokenized
-  datasets, checkpoints, plots, and evaluation outputs
+- GitHub repository:
+  - notebooks
+  - helper scripts
+  - templates
+  - documentation
+- Google Drive:
+  - raw data
+  - train-validation-test splits
+  - tokenizer artifacts
+  - tokenized datasets
+  - training checkpoints
+  - validation outputs
+  - test-set evaluation outputs
 
-Current repo:
+The intended Drive root is:
 
-- `hb791-dev/glycan-roberta-sandbox2`
-
-Current Drive root:
-
-- `MyDrive/ProjectRoot2/`
+- `MyDrive/FolderName/`
 
 ## Repository Layout
 
 ```text
-glycan-roberta-project2/
+ProjectFolderName/
 ├── README.md
 ├── requirements.txt
 ├── .gitignore
-├── docs/
-│   ├── legacy_notes.md
-│   ├── project_workflow.md
-│   └── run_index_schema.md
 ├── notebooks/
 │   ├── 00_data_exploration2.ipynb
 │   ├── 01_data_splitting2.ipynb
@@ -55,10 +65,10 @@ glycan-roberta-project2/
     └── run_index.csv
 ```
 
-## Drive Layout
+## Expected Drive Layout
 
 ```text
-MyDrive/ProjectRoot2/
+MyDrive/FolderName/
 ├── data/
 │   ├── raw/
 │   │   └── raw_glycans_dataset_no_aldi.txt
@@ -70,128 +80,20 @@ MyDrive/ProjectRoot2/
 │       └── split_preview.csv
 ├── tokenizers/
 │   ├── byte_bpe/
-│   │   └── v300_m2/
-│   │       ├── vocab.json
-│   │       ├── merges.txt
-│   │       ├── tokenizer.json
-│   │       ├── tokenizer_config.json
-│   │       ├── special_tokens_map.json
-│   │       ├── inspection_preview.csv
-│   │       └── tokenizer_config_summary.json
 │   ├── hybrid_char_bpe/
-│   │   └── v70_m2/
-│   │       ├── vocab.json
-│   │       ├── merges.txt
-│   │       ├── tokenizer.json
-│   │       ├── tokenizer_config.json
-│   │       ├── special_tokens_map.json
-│   │       ├── inspection_preview.csv
-│   │       └── tokenizer_config_summary.json
 │   └── manual/
-│       └── v1_train_only/
-│           ├── vocab.json
-│           ├── tokenizer.json
-│           ├── tokenizer_config.json
-│           ├── special_tokens_map.json
-│           ├── inspection_preview.csv
-│           └── tokenizer_config_summary.json
 ├── tokenized_datasets/
 │   ├── byte_bpe/
-│   │   └── v300_m2/
-│   │       ├── train_dataset.pt
-│   │       ├── val_dataset.pt
-│   │       ├── test_dataset.pt
-│   │       ├── tokenization_preview.csv
-│   │       └── preprocessing_summary.json
 │   ├── hybrid_char_bpe/
-│   │   └── v70_m2/
-│   │       ├── train_dataset.pt
-│   │       ├── val_dataset.pt
-│   │       ├── test_dataset.pt
-│   │       ├── tokenization_preview.csv
-│   │       └── preprocessing_summary.json
 │   └── manual/
-│       └── v1_train_only/
-│           ├── train_dataset.pt
-│           ├── val_dataset.pt
-│           ├── test_dataset.pt
-│           ├── tokenization_preview.csv
-│           └── preprocessing_summary.json
 ├── checkpoints/
 │   ├── byte_bpe/
-│   │   └── <experiment_name>/
-│   │       ├── best_model/
-│   │       ├── checkpoint-*/
-│   │       ├── logs/
-│   │       ├── experiment_metadata.json
-│   │       └── trainer_state.json
 │   ├── hybrid_char_bpe/
-│   │   └── mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/
-│   │       ├── best_model/
-│   │       ├── checkpoint-*/
-│   │       ├── logs/
-│   │       ├── experiment_metadata.json
-│   │       └── trainer_state.json
 │   └── manual/
-│       └── <experiment_name>/
-│           ├── best_model/
-│           ├── checkpoint-*/
-│           ├── logs/
-│           ├── experiment_metadata.json
-│           └── trainer_state.json
 ├── results/
 │   ├── exploration/
 │   ├── validation/
-│   │   ├── byte_bpe/
-│   │   │   └── <experiment_name>/
-│   │   │       ├── loss_curves.png
-│   │   │       ├── loss_history.csv
-│   │   │       └── validation_summary.json
-│   │   ├── hybrid_char_bpe/
-│   │   │   └── mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/
-│   │   │       ├── loss_curves.png
-│   │   │       ├── loss_history.csv
-│   │   │       └── validation_summary.json
-│   │   └── manual/
-│   │       └── <experiment_name>/
-│   │           ├── loss_curves.png
-│   │           ├── loss_history.csv
-│   │           └── validation_summary.json
-│   ├── test_evaluation/
-│   │   ├── byte_bpe/
-│   │   │   └── <experiment_name>/
-│   │   │       ├── masking_summary.csv
-│   │   │       ├── test_summary.json
-│   │   │       ├── test_summary_row.csv
-│   │   │       ├── per_class_metrics.csv
-│   │   │       ├── roc_curves.png
-│   │   │       ├── roc_auc_summary.csv
-│   │   │       ├── pr_curves.png
-│   │   │       ├── pr_auc_summary.csv
-│   │   │       └── qualitative_probe_results.csv
-│   │   ├── hybrid_char_bpe/
-│   │   │   └── mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/
-│   │   │       ├── masking_summary.csv
-│   │   │       ├── test_summary.json
-│   │   │       ├── test_summary_row.csv
-│   │   │       ├── per_class_metrics.csv
-│   │   │       ├── roc_curves.png
-│   │   │       ├── roc_auc_summary.csv
-│   │   │       ├── pr_curves.png
-│   │   │       ├── pr_auc_summary.csv
-│   │   │       └── qualitative_probe_results.csv
-│   │   └── manual/
-│   │       └── <experiment_name>/
-│   │           ├── masking_summary.csv
-│   │           ├── test_summary.json
-│   │           ├── test_summary_row.csv
-│   │           ├── per_class_metrics.csv
-│   │           ├── roc_curves.png
-│   │           ├── roc_auc_summary.csv
-│   │           ├── pr_curves.png
-│   │           ├── pr_auc_summary.csv
-│   │           └── qualitative_probe_results.csv
-│   └── qualitative_probes/
+│   └── test_evaluation/
 └── registry/
     └── run_index.csv
 ```
@@ -201,314 +103,216 @@ MyDrive/ProjectRoot2/
 ### `00_data_exploration2.ipynb`
 
 Purpose:
-- inspect the raw dataset before any splits are created
-- summarize raw sequence lengths
-- save lightweight reference outputs for later comparison
+- inspect the raw glycan dataset
+- summarize sequence lengths
+- save lightweight exploration outputs
 
-Input:
-- `MyDrive/ProjectRoot2/data/raw/raw_glycans_dataset_no_aldi.txt`
-
-Outputs:
-- `MyDrive/ProjectRoot2/results/exploration/dataset_summary.csv`
-- `MyDrive/ProjectRoot2/results/exploration/example_sequences.csv`
-- `MyDrive/ProjectRoot2/results/exploration/sequence_length_distribution.png`
+Main outputs:
+- dataset summary CSV
+- example sequences CSV
+- sequence-length distribution plot
 
 ### `01_data_splitting2.ipynb`
 
 Purpose:
-- create the train, validation, and test splits from the raw dataset
+- create the train-validation-test split from the raw dataset
 
-Input:
-- `MyDrive/ProjectRoot2/data/raw/raw_glycans_dataset_no_aldi.txt`
-
-Outputs:
-- `MyDrive/ProjectRoot2/data/splits/train.txt`
-- `MyDrive/ProjectRoot2/data/splits/val.txt`
-- `MyDrive/ProjectRoot2/data/splits/test.txt`
-- `MyDrive/ProjectRoot2/data/splits/split_summary.csv`
-- `MyDrive/ProjectRoot2/data/splits/split_preview.csv`
+Main outputs:
+- `train.txt`
+- `val.txt`
+- `test.txt`
+- `split_summary.csv`
+- `split_preview.csv`
 
 ### `02a_byte_bpe_gen2.ipynb`
 
 Purpose:
-- train the byte-level BPE baseline tokenizer
+- train the byte-level BPE tokenizer on the training split
 
-Input:
-- `MyDrive/ProjectRoot2/data/splits/train.txt`
-
-Outputs:
-- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/vocab.json`
-- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/merges.txt`
-- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/tokenizer.json`
-- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/tokenizer_config.json`
-- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/special_tokens_map.json`
-- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/inspection_preview.csv`
-- `MyDrive/ProjectRoot2/tokenizers/byte_bpe/v300_m2/tokenizer_config_summary.json`
+Main outputs:
+- tokenizer files
+- merges and vocab
+- inspection preview
+- tokenizer configuration summary
 
 ### `02c_manual_gen2.ipynb`
 
 Purpose:
-- build the manual tokenizer from the training split using the glycan parser
-- save a fixed word-level vocabulary and matching Hugging Face tokenizer
+- build the manual glycan tokenizer from the training split
+- save a fixed vocabulary and matching Hugging Face tokenizer
 
-Input:
-- `MyDrive/ProjectRoot2/data/splits/train.txt`
-
-Outputs:
-- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/vocab.json`
-- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/tokenizer.json`
-- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/tokenizer_config.json`
-- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/special_tokens_map.json`
-- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/inspection_preview.csv`
-- `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/tokenizer_config_summary.json`
+Main outputs:
+- tokenizer files
+- vocab
+- inspection preview
+- tokenizer configuration summary
 
 ### `02d_hybrid_char_bpe_gen2.ipynb`
 
 Purpose:
-- train the hybrid character-BPE tokenizer on the training split
-- save raw merge files and the matching Hugging Face tokenizer
+- train a hybrid char-BPE tokenizer restricted to the character inventory
+  present in the dataset
+- leave more vocabulary space available for learned merges
 
-Input:
-- `MyDrive/ProjectRoot2/data/splits/train.txt`
-
-Outputs:
-- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/vocab.json`
-- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/merges.txt`
-- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/tokenizer.json`
-- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/tokenizer_config.json`
-- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/special_tokens_map.json`
-- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/inspection_preview.csv`
-- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/tokenizer_config_summary.json`
-
-### `02_tokenizer_generation/*2.ipynb`
-
-Tokenizer families covered in this stage:
-- `byte_bpe`
-- `hybrid_char_bpe`
-- `manual`
+Main outputs:
+- tokenizer files
+- merges and vocab
+- inspection preview
+- tokenizer configuration summary
 
 ### `03_dataset_preprocessing2.ipynb`
 
 Purpose:
-- tokenize the train, validation, and test splits for one tokenizer setting
-- export PyTorch-ready dataset tensors
+- tokenize the train, validation, and test splits with one selected tokenizer
+- save padded tensor datasets for training and evaluation
 
-Inputs:
-- `MyDrive/ProjectRoot2/data/splits/train.txt`
-- `MyDrive/ProjectRoot2/data/splits/val.txt`
-- `MyDrive/ProjectRoot2/data/splits/test.txt`
-- tokenizer files from one folder in `MyDrive/ProjectRoot2/tokenizers/`
-
-Outputs:
-- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/train_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/val_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/test_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/tokenization_preview.csv`
-- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/preprocessing_summary.json`
-- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/train_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/val_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/test_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/tokenization_preview.csv`
-- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/preprocessing_summary.json`
-- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/train_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/val_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/test_dataset.pt`
-- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/tokenization_preview.csv`
-- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/preprocessing_summary.json`
+Main outputs:
+- `train_dataset.pt`
+- `val_dataset.pt`
+- `test_dataset.pt`
+- `tokenization_preview.csv`
+- `preprocessing_summary.json`
 
 ### `04_roberta_pretraining2.ipynb`
 
 Purpose:
-- train `RobertaForMaskedLM` models from scratch
-- save checkpoints, `best_model`, trainer state, and experiment metadata
-- support fresh runs and continuation-style runs
+- pretrain a RoBERTa masked-language model on the tokenized training split
+- evaluate on the validation split during training
+- support fresh runs, checkpoint resumes, and continuation runs
 
-Inputs:
-- tokenizer files from one folder in `MyDrive/ProjectRoot2/tokenizers/`
-- tokenized datasets from one folder in `MyDrive/ProjectRoot2/tokenized_datasets/`
-- optional checkpoint or `best_model` folder for continuation runs
-
-Outputs:
-- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/best_model/`
-- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/checkpoint-*/`
-- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/logs/`
-- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/experiment_metadata.json`
-- `MyDrive/ProjectRoot2/checkpoints/byte_bpe/<experiment_name>/trainer_state.json`
-- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/best_model/`
-- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/checkpoint-*/`
-- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/logs/`
-- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/experiment_metadata.json`
-- `MyDrive/ProjectRoot2/checkpoints/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/trainer_state.json`
-- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/best_model/`
-- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/checkpoint-*/`
-- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/logs/`
-- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/experiment_metadata.json`
-- `MyDrive/ProjectRoot2/checkpoints/manual/<experiment_name>/trainer_state.json`
-- `MyDrive/ProjectRoot2/registry/run_index.csv`
+Main outputs:
+- checkpoint folders
+- `best_model/`
+- `trainer_state.json`
+- `experiment_metadata.json`
+- run-index updates
 
 Notes:
-- this training-output pattern now exists for `byte_bpe`, `hybrid_char_bpe`, and `manual`
-- each completed run should end with `best_model/`, `trainer_state.json`, `experiment_metadata.json`, and the retained checkpoint folders
+- masking is dynamic and applied on the fly by the MLM data collator
+- validation in this notebook is for training-time diagnostics, not final
+  model comparison
 
 ### `05_validation_diagnostics2.ipynb`
 
 Purpose:
-- inspect training and validation loss after a run finishes
-- support continuation decisions
-- save validation summaries
+- review training and validation loss after notebook 4
+- summarize best-epoch and final validation behavior for a run
 
-Inputs:
-- `trainer_state.json` from one experiment folder in `MyDrive/ProjectRoot2/checkpoints/`
-- `experiment_metadata.json` from that same experiment folder
-- `MyDrive/ProjectRoot2/registry/run_index.csv`
-
-Outputs:
-- `MyDrive/ProjectRoot2/results/validation/byte_bpe/<experiment_name>/loss_curves.png`
-- `MyDrive/ProjectRoot2/results/validation/byte_bpe/<experiment_name>/loss_history.csv`
-- `MyDrive/ProjectRoot2/results/validation/byte_bpe/<experiment_name>/validation_summary.json`
-- `MyDrive/ProjectRoot2/results/validation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/loss_curves.png`
-- `MyDrive/ProjectRoot2/results/validation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/loss_history.csv`
-- `MyDrive/ProjectRoot2/results/validation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/validation_summary.json`
-- `MyDrive/ProjectRoot2/results/validation/manual/<experiment_name>/loss_curves.png`
-- `MyDrive/ProjectRoot2/results/validation/manual/<experiment_name>/loss_history.csv`
-- `MyDrive/ProjectRoot2/results/validation/manual/<experiment_name>/validation_summary.json`
-- updated `MyDrive/ProjectRoot2/registry/run_index.csv`
-
-Notes:
-- this validation-output pattern now exists for `byte_bpe`, `hybrid_char_bpe`, and `manual`
-- the validation notebook is only for training diagnostics and continuation decisions, not final model comparison
+Main outputs:
+- `loss_curves.png`
+- `loss_history.csv`
+- `validation_summary.json`
 
 ### `06_test_set_evaluation2.ipynb`
 
 Purpose:
-- evaluate the saved best model on held-out test data
-- compute masked-token prediction metrics on a deterministic masked test set
-- save test metrics, plots, and qualitative probe outputs
-- compare biological concepts in a tokenizer-specific way rather than forcing
-  identical token boundaries across vocabularies
+- evaluate a saved `best_model` on the held-out test split
+- compute token-level, sequence-level, per-class, ROC, PR, and qualitative
+  probe outputs
 
-Inputs:
-- `best_model/` from one experiment folder in `MyDrive/ProjectRoot2/checkpoints/`
-- `test_dataset.pt` from the matching tokenizer setting in
-  `MyDrive/ProjectRoot2/tokenized_datasets/`
-- `MyDrive/ProjectRoot2/registry/run_index.csv`
-
-Outputs:
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/masking_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/test_summary.json`
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/test_summary_row.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/per_class_metrics.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/roc_curves.png`
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/roc_auc_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/pr_curves.png`
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/pr_auc_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/byte_bpe/<experiment_name>/qualitative_probe_results.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/masking_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/test_summary.json`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/test_summary_row.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/per_class_metrics.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/roc_curves.png`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/roc_auc_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/pr_curves.png`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/pr_auc_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/hybrid_char_bpe/mlm15_L6_H512_A8_lr00001_ep100_setv70_m2/qualitative_probe_results.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/masking_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/test_summary.json`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/test_summary_row.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/per_class_metrics.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/roc_curves.png`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/roc_auc_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/pr_curves.png`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/pr_auc_summary.csv`
-- `MyDrive/ProjectRoot2/results/test_evaluation/manual/<experiment_name>/qualitative_probe_results.csv`
-- updated `MyDrive/ProjectRoot2/registry/run_index.csv`
-
-Interpretation notes:
-- top-1, top-3, precision, recall, sensitivity, and specificity are computed
-  from masked-token prediction on the held-out test split
-- ROC and precision-recall plots use tokenizer-specific token lists
-- qualitative probes use shared biological sequences but tokenizer-specific
-  masking targets and expected tokens
-
-## Colab and GitHub Workflow
-
-Each notebook is designed around the same Colab pattern.
-
-1. Mount Google Drive.
-2. Clone or pull `glycan-roberta-sandbox2` into the Colab runtime.
-3. Add the cloned repo to `sys.path` so `src/` imports work.
-4. Read and write heavy artifacts in `MyDrive/ProjectRoot2/`.
-5. Save the notebook back to GitHub with the final sync cell.
+Main outputs:
+- `masking_summary.csv`
+- `test_summary.json`
+- `test_summary_row.csv`
+- `per_class_metrics.csv`
+- `roc_curves.png`
+- `roc_auc_summary.csv`
+- `pr_curves.png`
+- `pr_auc_summary.csv`
+- `qualitative_probe_results.csv`
 
 Notes:
-- the repo is private, so Colab uses a `GITHUB_TOKEN` secret for clone and pull
-- notebooks are easiest to work with as Drive-backed copies in Colab
-- the final notebook cell copies the Drive notebook into the repo clone, commits
-  it, pulls remote changes, and pushes back to GitHub
+- ROC and precision-recall plots use tokenizer-specific class selections
+- qualitative probes are tokenizer-specific because token boundaries differ
+  across tokenizers
 
-## Comments and Notebook Notes
+## Tokenizer Settings Used So Far
 
-This rebuild separates two styles of explanation.
+Current tokenizer settings in this rebuild:
 
-- `src/` files use professional comments and docstrings
-- notebooks use shorter, more informal notes explaining what a cell does, why
-  it exists, what parameters matter, and what the outputs mean
+- `byte_bpe`: `v300_m2`
+- `manual`: `v1_train_only`
+- `hybrid_char_bpe`: `v70_m2`
 
-The goal is to keep the code stable while leaving the notebooks readable as
-working research notes.
+These labels are used consistently across:
+- tokenizer folders
+- tokenized-dataset folders
+- training checkpoints
+- validation outputs
+- test-set evaluation outputs
 
-## Run Tracking
+## Training Setup
 
-Future runs are intended to be recorded in:
+The current training notebook supports:
 
-- `MyDrive/ProjectRoot2/registry/run_index.csv`
+- fresh runs
+- checkpoint-resume runs
+- continuation runs from `best_model`
 
-The repo includes:
+The main model configuration used so far is:
 
-- `src/run_index.py` for notebook-side updates
-- `templates/run_index.csv` as the starter schema
-- `templates/experiment_metadata.example.json` as a metadata reference
+- MLM probability: `0.15`
+- hidden layers: `6`
+- hidden size: `512`
+- attention heads: `8`
+- learning rate: `1e-4`
+- batch size: `32`
 
-## Requirements
+Training diagnostics and test outputs are written with experiment-specific
+names so runs can be compared later without overwriting older results.
 
-Current dependencies:
+## Evaluation Workflow
 
-- `transformers`
-- `tokenizers`
-- `torch`
-- `scikit-learn`
-- `matplotlib`
-- `pandas`
-- `numpy`
-- `jupyter`
+The current evaluation workflow separates:
 
-Install with:
+- notebook 4:
+  - training-time validation diagnostics
+  - overfitting checks
+  - checkpoint behavior
+- notebook 6:
+  - held-out test-set evaluation
+  - top-1 and top-3 token accuracy
+  - top-1 and top-3 sequence accuracy
+  - macro and weighted precision/recall/F1
+  - per-class metrics
+  - tokenizer-specific ROC and precision-recall plots
+  - qualitative-probe examples
 
-```bash
-pip install -r requirements.txt
-```
+## Reproducibility Notes
+
+To reproduce this workflow, a new user will need:
+
+- this repository
+- the raw glycan dataset
+- a Drive folder matching the expected `FolderName` structure
+- access to a Colab or Python environment with the required packages installed
+
+Most notebook paths assume Google Drive mounting in Colab and a project root
+of:
+
+- `/content/drive/MyDrive/FolderName`
+
+If this path changes, the notebook configuration cells should be updated
+accordingly.
 
 ## Current Status
 
-The rebuilt workflow is in progress.
+This rebuild currently includes:
 
-What is already in place:
-- new repo initialized and pushed
-- new Drive root created
-- `src/` migrated and cleaned
-- notebook `00_data_exploration2.ipynb` rebuilt and tested
-- notebook `01_data_splitting2.ipynb` rebuilt and tested
-- notebook `02a_byte_bpe_gen2.ipynb` rebuilt and tested
-- notebook `02c_manual_gen2.ipynb` rebuilt and tested
-- notebook `02d_hybrid_char_bpe_gen2.ipynb` rebuilt and tested
-- notebook `03_dataset_preprocessing2.ipynb` rebuilt and tested for all three tokenizers
-- notebook `04_roberta_pretraining2.ipynb` rebuilt and run for all three tokenizers
-- notebook `05_validation_diagnostics2.ipynb` rebuilt and run for all three tokenizers
-- notebook `06_test_set_evaluation2.ipynb` rebuilt
-- tokenizer-specific held-out test evaluation helper implemented in `src/test_evaluation.py`
-- byte BPE, hybrid char-BPE, and manual training folders now all include `best_model/` and `trainer_state.json`
-- byte BPE, hybrid char-BPE, and manual validation folders now all include `loss_curves.png`, `loss_history.csv`, and `validation_summary.json`
+- all six main notebooks
+- tokenizer generation for all three tokenizer families
+- preprocessing for all three tokenizer families
+- pretraining runs for all three tokenizer families
+- validation diagnostics for all three tokenizer families
+- test-set evaluation outputs for the tokenizer comparison workflow
 
-What is next:
-- run notebook `06_test_set_evaluation2.ipynb` across the completed training runs
-- compare held-out test metrics across tokenizer and model variants
+## Notes
+
+This repository is a work-in-progress
+
+Earlier iterations of this project have been preserved separately as a legacy record while
+this version was reorganized to make:
+- run-tracking clearer
+- artifact storage more consistent
+- notebook roles easier to follow
+- reproduction easier
