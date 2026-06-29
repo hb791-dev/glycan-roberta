@@ -79,6 +79,14 @@ MyDrive/ProjectRoot2/
 │   │       ├── inspection_preview.csv
 │   │       └── tokenizer_config_summary.json
 │   ├── hybrid_char_bpe/
+│   │   └── v70_m2/
+│   │       ├── vocab.json
+│   │       ├── merges.txt
+│   │       ├── tokenizer.json
+│   │       ├── tokenizer_config.json
+│   │       ├── special_tokens_map.json
+│   │       ├── inspection_preview.csv
+│   │       └── tokenizer_config_summary.json
 │   └── manual/
 │       └── v1_train_only/
 │           ├── vocab.json
@@ -169,6 +177,24 @@ Outputs:
 - `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/special_tokens_map.json`
 - `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/inspection_preview.csv`
 - `MyDrive/ProjectRoot2/tokenizers/manual/v1_train_only/tokenizer_config_summary.json`
+
+### `02d_hybrid_char_bpe_gen2.ipynb`
+
+Purpose:
+- train the hybrid character-BPE tokenizer on the training split
+- save raw merge files and the matching Hugging Face tokenizer
+
+Input:
+- `MyDrive/ProjectRoot2/data/splits/train.txt`
+
+Outputs:
+- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/vocab.json`
+- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/merges.txt`
+- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/tokenizer.json`
+- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/tokenizer_config.json`
+- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/special_tokens_map.json`
+- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/inspection_preview.csv`
+- `MyDrive/ProjectRoot2/tokenizers/hybrid_char_bpe/v70_m2/tokenizer_config_summary.json`
 
 ### `02_tokenizer_generation/*2.ipynb`
 
@@ -274,8 +300,8 @@ What is already in place:
 - notebook `01_data_splitting2.ipynb` rebuilt and tested
 - notebook `02a_byte_bpe_gen2.ipynb` rebuilt and tested
 - notebook `02c_manual_gen2.ipynb` rebuilt and tested
+- notebook `02d_hybrid_char_bpe_gen2.ipynb` rebuilt and tested
 
 What is next:
-- rebuild the remaining tokenizer notebook
 - continue notebook-by-notebook through preprocessing,
   training, validation, and test evaluation
