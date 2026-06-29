@@ -97,8 +97,26 @@ MyDrive/ProjectRoot2/
 │           └── tokenizer_config_summary.json
 ├── tokenized_datasets/
 │   ├── byte_bpe/
+│   │   └── v300_m2/
+│   │       ├── train_dataset.pt
+│   │       ├── val_dataset.pt
+│   │       ├── test_dataset.pt
+│   │       ├── tokenization_preview.csv
+│   │       └── preprocessing_summary.json
 │   ├── hybrid_char_bpe/
+│   │   └── v70_m2/
+│   │       ├── train_dataset.pt
+│   │       ├── val_dataset.pt
+│   │       ├── test_dataset.pt
+│   │       ├── tokenization_preview.csv
+│   │       └── preprocessing_summary.json
 │   └── manual/
+│       └── v1_train_only/
+│           ├── train_dataset.pt
+│           ├── val_dataset.pt
+│           ├── test_dataset.pt
+│           ├── tokenization_preview.csv
+│           └── preprocessing_summary.json
 ├── checkpoints/
 │   ├── byte_bpe/
 │   ├── hybrid_char_bpe/
@@ -209,6 +227,29 @@ Purpose:
 - tokenize the train, validation, and test splits for one tokenizer setting
 - export PyTorch-ready dataset tensors
 
+Inputs:
+- `MyDrive/ProjectRoot2/data/splits/train.txt`
+- `MyDrive/ProjectRoot2/data/splits/val.txt`
+- `MyDrive/ProjectRoot2/data/splits/test.txt`
+- tokenizer files from one folder in `MyDrive/ProjectRoot2/tokenizers/`
+
+Outputs:
+- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/train_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/val_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/test_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/tokenization_preview.csv`
+- `MyDrive/ProjectRoot2/tokenized_datasets/byte_bpe/v300_m2/preprocessing_summary.json`
+- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/train_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/val_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/test_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/tokenization_preview.csv`
+- `MyDrive/ProjectRoot2/tokenized_datasets/hybrid_char_bpe/v70_m2/preprocessing_summary.json`
+- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/train_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/val_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/test_dataset.pt`
+- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/tokenization_preview.csv`
+- `MyDrive/ProjectRoot2/tokenized_datasets/manual/v1_train_only/preprocessing_summary.json`
+
 ### `04_roberta_pretraining2.ipynb`
 
 Purpose:
@@ -301,6 +342,7 @@ What is already in place:
 - notebook `02a_byte_bpe_gen2.ipynb` rebuilt and tested
 - notebook `02c_manual_gen2.ipynb` rebuilt and tested
 - notebook `02d_hybrid_char_bpe_gen2.ipynb` rebuilt and tested
+- notebook `03_dataset_preprocessing2.ipynb` rebuilt and tested for all three tokenizers
 
 What is next:
 - continue notebook-by-notebook through preprocessing,
