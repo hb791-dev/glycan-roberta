@@ -35,8 +35,7 @@ The intended Drive root is:
 
 - `MyDrive/ProjectRoot/`
 
-The notebooks default to `MyDrive/ProjectRoot/` for Drive storage.
-If you already have an older `MyDrive/ProjectRoot2/` folder, the setup cells will still fall back to it automatically.
+The notebooks assume a single Drive project root at `MyDrive/ProjectRoot/`.
 
 ## Repository Layout
 
