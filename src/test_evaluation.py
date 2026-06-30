@@ -287,6 +287,156 @@ def compute_per_class_metrics(y_true, y_pred, tokenizer) -> pd.DataFrame:
     ).sort_values("support", ascending=False)
 
 
+def build_top1_correctness_frame(y_true, y_pred, y_probs, tokenizer) -> pd.DataFrame:
+    """Build a token-level table for top-1 correctness analysis."""
+    row_indices = np.arange(len(y_pred))
+    top1_confidence = y_probs[row_indices, y_pred]
+
+    return pd.DataFrame(
+        {
+            "true_token_id": y_true.astype(int),
+            "true_token": tokenizer.convert_ids_to_tokens(y_true.tolist()),
+            "predicted_token_id": y_pred.astype(int),
+            "predicted_token": tokenizer.convert_ids_to_tokens(y_pred.tolist()),
+            "top1_confidence": top1_confidence.astype(float),
+            "top1_correct": (y_true == y_pred).astype(int),
+        }
+    )
+
+
+def _build_monotonic_pr_curve(binary_true, scores):
+    """Return an interpolated monotonic precision-recall envelope and AP."""
+    positive_count = int(binary_true.sum())
+
+    if positive_count == 0:
+        return np.array([0.0, 1.0]), np.array([0.0, 0.0]), 0.0
+
+    if positive_count == len(binary_true):
+        return np.array([0.0, 1.0]), np.array([1.0, 1.0]), 1.0
+
+    precision, recall, _ = precision_recall_curve(binary_true, scores)
+    average_precision = average_precision_score(binary_true, scores)
+
+    recall = recall[::-1]
+    precision = precision[::-1]
+
+    unique_recall = np.unique(recall)
+    max_precision = np.array([precision[recall == value].max() for value in unique_recall])
+    monotonic_precision = np.maximum.accumulate(max_precision[::-1])[::-1]
+
+    return unique_recall, monotonic_precision, float(average_precision)
+
+
+def plot_top1_correctness_pr_curves(
+    y_true,
+    y_pred,
+    y_probs,
+    tokenizer,
+    save_path=None,
+    recall_grid_points: int = 201,
+):
+    """Plot macro and support-weighted PR curves for top-1 correctness.
+
+    Each true token class is evaluated separately. Within a class, a masked
+    position is treated as a positive example when the model's top-1 prediction
+    is correct and as a negative example otherwise. The score is the top-1
+    prediction confidence. Per-class curves are converted to a monotonic
+    precision envelope before macro and support-weighted aggregation.
+    """
+    top1_frame = build_top1_correctness_frame(y_true, y_pred, y_probs, tokenizer)
+    class_ids = np.unique(y_true)
+    recall_grid = np.linspace(0.0, 1.0, recall_grid_points)
+
+    per_class_rows = []
+    class_precisions = []
+    class_supports = []
+
+    for class_id in class_ids:
+        class_mask = top1_frame["true_token_id"].to_numpy() == int(class_id)
+        class_rows = top1_frame.loc[class_mask]
+        class_correct = class_rows["top1_correct"].to_numpy()
+        class_scores = class_rows["top1_confidence"].to_numpy()
+
+        recall, precision, average_precision = _build_monotonic_pr_curve(
+            class_correct,
+            class_scores,
+        )
+        interpolated_precision = np.interp(recall_grid, recall, precision)
+
+        support = int(class_mask.sum())
+        correct_count = int(class_correct.sum())
+
+        class_precisions.append(interpolated_precision)
+        class_supports.append(support)
+        per_class_rows.append(
+            {
+                "token_id": int(class_id),
+                "token": class_rows["true_token"].iloc[0],
+                "support": support,
+                "correct_count": correct_count,
+                "incorrect_count": support - correct_count,
+                "top1_accuracy": correct_count / support if support else 0.0,
+                "average_precision": average_precision,
+            }
+        )
+
+    class_precision_matrix = np.vstack(class_precisions)
+    class_supports = np.asarray(class_supports, dtype=float)
+    per_class_summary = pd.DataFrame(per_class_rows).sort_values("support", ascending=False)
+
+    macro_precision = class_precision_matrix.mean(axis=0)
+    weighted_precision = np.average(class_precision_matrix, axis=0, weights=class_supports)
+    macro_average_precision = float(per_class_summary["average_precision"].mean())
+    weighted_average_precision = float(
+        np.average(per_class_summary["average_precision"], weights=per_class_summary["support"])
+    )
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(
+        recall_grid,
+        macro_precision,
+        label=f"Macro (mean AP = {macro_average_precision:.2f})",
+        linewidth=2,
+    )
+    plt.plot(
+        recall_grid,
+        weighted_precision,
+        label=f"Weighted (support-weighted AP = {weighted_average_precision:.2f})",
+        linewidth=2,
+    )
+    plt.xlabel("Recall of correct top-1 predictions")
+    plt.ylabel("Interpolated precision")
+    plt.title("All-token top-1 correctness precision-recall curves")
+    plt.xlim(0.0, 1.0)
+    plt.ylim(0.0, 1.05)
+    plt.legend(loc="lower left")
+    plt.grid(alpha=0.3)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+    aggregate_summary = pd.DataFrame(
+        [
+            {
+                "aggregation": "macro",
+                "average_precision": macro_average_precision,
+                "num_classes": int(len(per_class_summary)),
+                "num_examples": int(per_class_summary["support"].sum()),
+            },
+            {
+                "aggregation": "weighted",
+                "average_precision": weighted_average_precision,
+                "num_classes": int(len(per_class_summary)),
+                "num_examples": int(per_class_summary["support"].sum()),
+            },
+        ]
+    )
+
+    return aggregate_summary, per_class_summary
+
+
 def plot_roc_for_selected_classes(y_true, y_probs, tokenizer, selected_tokens, save_path=None) -> pd.DataFrame:
     """Plot one-vs-rest ROC curves for a selected set of token classes."""
     rows = []
