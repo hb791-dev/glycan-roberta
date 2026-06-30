@@ -395,13 +395,13 @@ def plot_top1_correctness_pr_curves(
     plt.plot(
         recall_grid,
         macro_precision,
-        label=f"Macro (mean AP = {macro_average_precision:.2f})",
+        label="Macro",
         linewidth=2,
     )
     plt.plot(
         recall_grid,
         weighted_precision,
-        label=f"Weighted (support-weighted AP = {weighted_average_precision:.2f})",
+        label="Weighted",
         linewidth=2,
     )
     plt.xlabel("Recall of correct top-1 predictions")
@@ -457,7 +457,7 @@ def plot_roc_for_selected_classes(y_true, y_probs, tokenizer, selected_tokens, s
         token_auc = auc(fpr, tpr)
 
         rows.append({"token": token, "auc": token_auc})
-        plt.plot(fpr, tpr, label=f"{token} (AUC = {token_auc:.2f})")
+        plt.plot(fpr, tpr, label=token)
 
     plt.plot([0, 1], [0, 1], linestyle="--", color="black")
     plt.xlabel("False positive rate")
@@ -475,7 +475,7 @@ def plot_roc_for_selected_classes(y_true, y_probs, tokenizer, selected_tokens, s
 
 
 def plot_pr_for_selected_classes(y_true, y_probs, tokenizer, selected_tokens, save_path=None) -> pd.DataFrame:
-    """Plot precision-recall curves for a selected set of token classes."""
+    """Plot monotonic precision-recall curves for a selected set of token classes."""
     rows = []
     plt.figure(figsize=(8, 6))
 
@@ -490,11 +490,10 @@ def plot_pr_for_selected_classes(y_true, y_probs, tokenizer, selected_tokens, sa
             continue
 
         token_scores = y_probs[:, token_id]
-        precision, recall, _ = precision_recall_curve(binary_true, token_scores)
-        avg_precision = average_precision_score(binary_true, token_scores)
+        recall, precision, avg_precision = _build_monotonic_pr_curve(binary_true, token_scores)
 
         rows.append({"token": token, "average_precision": avg_precision})
-        plt.plot(recall, precision, label=f"{token} (AP = {avg_precision:.2f})")
+        plt.plot(recall, precision, label=token)
 
     plt.xlabel("Recall")
     plt.ylabel("Precision")
