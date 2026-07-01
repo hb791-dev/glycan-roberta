@@ -250,7 +250,7 @@ The current training notebook supports:
 - checkpoint-resume runs
 - continuation runs from `best_model`
 
-The main model configuration used so far is:
+The default notebook configuration currently shown in the training workflow is:
 
 - MLM probability: `0.15`
 - hidden layers: `6`
@@ -261,6 +261,44 @@ The main model configuration used so far is:
 
 Training diagnostics and test outputs are written with experiment-specific
 names so runs can be compared later without overwriting older results.
+
+## Architectures Run So Far
+
+Based on the Drive-side run registry in
+`MyDrive/ProjectRoot/registry/run_index.csv`, this project has already been
+used to train more than one model architecture.
+
+Recorded architecture families:
+
+- `L4_H384_A6`:
+  4 layers, hidden size 384, 6 attention heads, intermediate size 1536
+- `L6_H512_A8`:
+  6 layers, hidden size 512, 8 attention heads, intermediate size 2048
+- `L8_H512_A8`:
+  8 layers, hidden size 512, 8 attention heads, intermediate size 2048
+
+Architectures observed by tokenizer family:
+
+- `manual`:
+  runs recorded for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
+- `hybrid_char_bpe`:
+  runs recorded for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
+- `byte_bpe`:
+  runs recorded for `L6_H512_A8`
+
+Run modes seen in the registry:
+
+- fresh training runs
+- continuation runs from `best_model`
+
+Notes:
+
+- the Drive run index also contains test-only rows where the architecture
+  fields are not fully populated, so the architecture summary above is based on
+  rows with recorded model dimensions
+- at the time this README was updated, the registry shows completed runs for
+  all three architecture families and at least one in-progress historical run
+  in the `L4_H384_A6` family
 
 ## Evaluation Workflow
 
