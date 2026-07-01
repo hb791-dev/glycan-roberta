@@ -54,10 +54,12 @@ glycan-roberta/
 │   ├── 03_dataset_preprocessing.ipynb
 │   ├── 04_roberta_pretraining.ipynb
 │   ├── 05_validation_diagnostics.ipynb
-│   └── 06_test_set_evaluation.ipynb
+│   ├── 06_test_set_evaluation.ipynb
+│   └── 07_similarity_analysis.ipynb
 ├── src/
 │   ├── data_utils.py
 │   ├── run_index.py
+│   ├── similarity.py
 │   ├── test_evaluation.py
 │   ├── tokenizer_utils.py
 │   └── training_diagnostics.py
@@ -94,7 +96,8 @@ MyDrive/ProjectRoot/
 ├── results/
 │   ├── exploration/
 │   ├── validation/
-│   └── test_evaluation/
+│   ├── test_evaluation/
+│   └── similarity/
 └── registry/
     └── run_index.csv
 ```
@@ -226,6 +229,26 @@ Notes:
 - ROC and precision-recall plots use tokenizer-specific class selections
 - qualitative probes are tokenizer-specific because token boundaries differ
   across tokenizers
+
+### `07_similarity_analysis.ipynb`
+
+Purpose:
+- compare glycan sequence embeddings from one or more saved model checkpoints
+- reuse the Drive-backed run registry to analyze many trained models
+- inspect tokenization alongside cosine similarity results
+
+Main outputs:
+- `similarity_pairs.csv`
+- `tokenization_preview.csv`
+- `similarity_matrix.csv`
+- `similarity_heatmap.png`
+- `similarity_config.json`
+- `cross_model_similarity_pairs.csv`
+
+Notes:
+- the reusable embedding and similarity logic lives in `src/similarity.py`
+- the notebook reads model locations from `registry/run_index.csv` and saves
+  outputs under `results/similarity/`
 
 ## Tokenizer Settings Used So Far
 
