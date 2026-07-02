@@ -245,7 +245,11 @@ Main outputs:
 - `similarity_config.json`
 
 Notes:
-- the reusable embedding and similarity logic lives in `src/similarity.py`
+- the notebook is intentionally thin and delegates the reusable workflow logic
+  to `src/similarity.py`
+- `src/similarity.py` now handles model loading support, validation, preview
+  sequence collection, similarity tables, heatmap generation, and output
+  writing
 - the notebook uses an explicit `MODEL_DIR` and `OUTPUT_NAME` instead of
   selecting runs from `registry/run_index.csv`
 - outputs are saved under `results/similarity/`

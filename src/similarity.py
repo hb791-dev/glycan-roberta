@@ -1,4 +1,8 @@
-"""Utilities for embedding glycans and comparing saved MLM checkpoints."""
+"""Utilities for embedding glycans and analyzing saved MLM checkpoints.
+
+This module keeps the reusable mechanics out of notebooks so analysis notebooks
+can focus on configuration, interpretation, and display.
+"""
 
 from __future__ import annotations
 
@@ -55,6 +59,35 @@ def _effective_max_length(tokenizer, max_length: int | None) -> int | None:
 def tokenize_sequence(sequence: str, tokenizer) -> list[str]:
     """Return the tokenized view of one glycan sequence."""
     return tokenizer.tokenize(sequence)
+
+
+def collect_preview_sequences(
+    sequence_pairs: Sequence[dict],
+    matrix_sequences: Sequence[str],
+) -> list[str]:
+    """Return each unique sequence once in first-seen order.
+
+    The notebook compares some sequences directly as named pairs and may also
+    include a wider panel for the similarity matrix. This helper builds a single
+    preview list so the tokenization table covers every sequence that appears in
+    either view without duplicating rows.
+    """
+    preview_sequences: list[str] = []
+    seen_sequences: set[str] = set()
+
+    for pair in sequence_pairs:
+        for key in ("seq1", "seq2"):
+            sequence = pair[key]
+            if sequence not in seen_sequences:
+                preview_sequences.append(sequence)
+                seen_sequences.add(sequence)
+
+    for sequence in matrix_sequences:
+        if sequence not in seen_sequences:
+            preview_sequences.append(sequence)
+            seen_sequences.add(sequence)
+
+    return preview_sequences
 
 
 def build_tokenization_preview(sequences: Sequence[str], tokenizer) -> "pd.DataFrame":
@@ -221,3 +254,166 @@ def similarity_matrix_dataframe(
         batch_size=batch_size,
     )
     return pd.DataFrame(similarity_tensor.numpy(), index=sequences, columns=sequences)
+
+
+def validate_similarity_inputs(
+    model_dir,
+    sequence_pairs: Sequence[dict],
+    matrix_sequences: Sequence[str],
+    output_dir=None,
+) -> None:
+    """Validate the minimum inputs required for one similarity-analysis run.
+
+    The notebook should fail early with clear messages when a checkpoint path is
+    wrong or the requested sequence lists are empty. Doing this in src keeps the
+    checks consistent if the same workflow is reused elsewhere.
+    """
+    from pathlib import Path
+
+    model_path = Path(model_dir)
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model directory not found: {model_path}")
+
+    required_model_files = ["config.json"]
+    missing_files = [filename for filename in required_model_files if not (model_path / filename).exists()]
+    if missing_files:
+        raise FileNotFoundError(
+            f"Model directory is missing required files: {missing_files}"
+        )
+
+    if not sequence_pairs:
+        raise ValueError("Add at least one sequence pair before running the analysis.")
+
+    if not matrix_sequences:
+        raise ValueError("Add at least one matrix sequence before running the analysis.")
+
+    if output_dir is not None:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+
+def plot_similarity_heatmap(similarity_df, output_path, title: str) -> None:
+    """Display the similarity heatmap inline and save it to disk.
+
+    Keeping the plotting logic here avoids repeating formatting code in the
+    notebook and makes future plot changes apply everywhere consistently.
+    """
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    image = ax.imshow(similarity_df.values, cmap="viridis", vmin=-1.0, vmax=1.0)
+    fig.colorbar(image, ax=ax, label="Cosine similarity")
+    ax.set_xticks(range(len(similarity_df.columns)))
+    ax.set_xticklabels(similarity_df.columns, rotation=45, ha="right")
+    ax.set_yticks(range(len(similarity_df.index)))
+    ax.set_yticklabels(similarity_df.index)
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.show()
+    plt.close(fig)
+
+
+def save_similarity_outputs(
+    pair_results_df,
+    tokenization_preview_df,
+    similarity_df,
+    output_dir,
+    output_name: str,
+    config_payload: dict,
+) -> dict:
+    """Write similarity outputs to disk and return the saved file paths.
+
+    The returned dictionary lets notebooks print or reuse output paths without
+    reconstructing them manually.
+    """
+    from pathlib import Path
+    import json
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    pair_results_path = output_path / "similarity_pairs.csv"
+    tokenization_preview_path = output_path / "tokenization_preview.csv"
+    similarity_matrix_path = output_path / "similarity_matrix.csv"
+    heatmap_path = output_path / "similarity_heatmap.png"
+    config_path = output_path / "similarity_config.json"
+
+    pair_results_df.to_csv(pair_results_path, index=False)
+    tokenization_preview_df.to_csv(tokenization_preview_path, index=False)
+    similarity_df.to_csv(similarity_matrix_path)
+    plot_similarity_heatmap(similarity_df, heatmap_path, f"{output_name} similarity heatmap")
+
+    with open(config_path, "w", encoding="utf-8") as file:
+        json.dump(config_payload, file, indent=2)
+
+    return {
+        "pair_results_path": pair_results_path,
+        "tokenization_preview_path": tokenization_preview_path,
+        "similarity_matrix_path": similarity_matrix_path,
+        "heatmap_path": heatmap_path,
+        "config_path": config_path,
+    }
+
+
+def run_similarity_analysis(
+    tokenizer,
+    model,
+    sequence_pairs: Sequence[dict],
+    matrix_sequences: Sequence[str],
+    output_dir,
+    output_name: str,
+    device: str | torch.device | None = None,
+    max_length: int | None = None,
+    batch_size: int = 32,
+    model_dir=None,
+) -> dict:
+    """Run one end-to-end similarity analysis and return notebook-ready results.
+
+    This function is intentionally high level: it computes the pairwise results,
+    tokenization preview, full similarity matrix, and output files in one call.
+    The notebook can then focus on showing the returned tables and paths.
+    """
+    preview_sequences = collect_preview_sequences(sequence_pairs, matrix_sequences)
+
+    pair_results_df = compare_sequence_pairs(
+        sequence_pairs,
+        tokenizer=tokenizer,
+        model=model,
+        device=device,
+        max_length=max_length,
+    )
+    tokenization_preview_df = build_tokenization_preview(preview_sequences, tokenizer)
+    similarity_df = similarity_matrix_dataframe(
+        matrix_sequences,
+        tokenizer=tokenizer,
+        model=model,
+        device=device,
+        max_length=max_length,
+        batch_size=batch_size,
+    )
+
+    config_payload = {
+        "model_dir": str(model_dir) if model_dir is not None else "",
+        "output_dir": str(output_dir),
+        "sequence_pairs": list(sequence_pairs),
+        "matrix_sequences": list(matrix_sequences),
+        "max_length": max_length,
+        "batch_size": batch_size,
+    }
+    saved_paths = save_similarity_outputs(
+        pair_results_df=pair_results_df,
+        tokenization_preview_df=tokenization_preview_df,
+        similarity_df=similarity_df,
+        output_dir=output_dir,
+        output_name=output_name,
+        config_payload=config_payload,
+    )
+
+    return {
+        "pair_results_df": pair_results_df,
+        "tokenization_preview_df": tokenization_preview_df,
+        "similarity_df": similarity_df,
+        "preview_sequences": preview_sequences,
+        "saved_paths": saved_paths,
+        "config_payload": config_payload,
+    }
