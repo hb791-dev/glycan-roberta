@@ -233,10 +233,11 @@ Notes:
 ### `07_similarity_analysis.ipynb`
 
 Purpose:
-- compare glycan sequence embeddings from one or more saved model checkpoints
-- reuse the Drive-backed run registry to analyze many trained models
-- run manual inference on glycan examples that you choose in the notebook
+- compare glycan sequence embeddings from one saved model checkpoint at a time
+- choose one `best_model/` folder in Drive in a single `MODEL_DIR` cell
+- run manual example pairs plus an optional custom pair
 - inspect tokenization alongside cosine similarity results
+- view a similarity matrix and inline heatmap for the selected glycans
 
 Main outputs:
 - `similarity_pairs.csv`
@@ -244,12 +245,10 @@ Main outputs:
 - `similarity_matrix.csv`
 - `similarity_heatmap.png`
 - `similarity_config.json`
-- `cross_model_similarity_pairs.csv`
 
 Notes:
 - the reusable embedding and similarity logic lives in `src/similarity.py`
-- the notebook reads model locations from `registry/run_index.csv` and saves
-  outputs under `results/similarity/`
+- the notebook saves outputs under `results/similarity/`
 - this notebook is not split-specific evaluation: it does not automatically load
   only the train, validation, or test set
 - the selected checkpoint may come from a run associated with a dataset split,
