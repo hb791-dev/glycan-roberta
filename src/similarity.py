@@ -199,16 +199,21 @@ def compare_sequence_pairs(
             device=device,
             max_length=max_length,
         )
-        comparison_rows.append(
-            {
-                "pair_name": pair["pair_name"],
-                "seq1": result["seq1"],
-                "seq2": result["seq2"],
-                "cosine_similarity": result["cosine_similarity"],
-                "seq1_tokens": " | ".join(result["seq1_tokens"]),
-                "seq2_tokens": " | ".join(result["seq2_tokens"]),
-            }
-        )
+        # Preserve optional grouping metadata so notebooks can present curated
+        # examples such as "Very similar" and "Less similar" in separate
+        # sections without re-merging the original config by hand.
+        comparison_row = {
+            "pair_name": pair["pair_name"],
+            "seq1": result["seq1"],
+            "seq2": result["seq2"],
+            "cosine_similarity": result["cosine_similarity"],
+            "seq1_tokens": " | ".join(result["seq1_tokens"]),
+            "seq2_tokens": " | ".join(result["seq2_tokens"]),
+        }
+        if "group_name" in pair:
+            comparison_row["group_name"] = pair["group_name"]
+
+        comparison_rows.append(comparison_row)
 
     return pd.DataFrame(comparison_rows)
 

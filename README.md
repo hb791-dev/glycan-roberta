@@ -235,6 +235,7 @@ Notes:
 Purpose:
 - compare glycan sequence embeddings from one saved model checkpoint
 - point directly at one `best_model/` folder in Drive
+- start from curated example groups and optionally add one custom pair
 - inspect tokenization alongside cosine similarity results
 
 Main outputs:
@@ -252,6 +253,8 @@ Notes:
   writing
 - the notebook uses one explicit `MODEL_DIR` and derives the output folder
   name automatically from that checkpoint path
+- the pairwise examples are organized into labeled groups such as `Very similar`
+  and `Less similar`, with an optional custom pair section
 - outputs are saved under `results/similarity/`
 
 ## Tokenizer Settings Used So Far
