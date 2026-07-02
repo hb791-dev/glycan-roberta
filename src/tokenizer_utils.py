@@ -7,9 +7,14 @@ from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
-from tokenizers import Tokenizer
+from tokenizers import Regex, Tokenizer
 from tokenizers.models import BPE
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Split
+from tokenizers.processors import RobertaProcessing
 from tokenizers.trainers import BpeTrainer
+from tokenizers.trainers import WordLevelTrainer
+from transformers import PreTrainedTokenizerFast
 
 
 # These patterns define the manual glycan parser. They are written separately so
@@ -35,6 +40,13 @@ HUGGINGFACE_FAST_PATTERN = (
     r"Neu5Gc9Ac|Neu5,9Ac2|ManNAc|GalNAc|GlcNAc|HexNAc|NeuAc|NeuGc|GlcA|IdoA|"
     r"GlcN|Fru|Fuc|Gal|Glc|Hex|Kdn|Man|Xyl|\d+S|[ab?][0-9?]-[0-9?]|\|[0-9?]+|[\(\)\[\]]|[ab]"
 )
+
+# GlyBERTa-style tokenization treats whole linkages and square-bracket branch
+# markers as standalone tokens while leaving the monosaccharide text between
+# them intact as the other token type.
+GLYBERTA_GLYCOLETTER_PATTERN = r"\([^()]*\)|\[|\]"
+
+SPECIAL_TOKENS = ["<s>", "<pad>", "</s>", "<unk>", "<mask>"]
 
 
 @dataclass(frozen=True)
@@ -220,3 +232,51 @@ def train_hybrid_char_bpe(train_file: str, vocab_size: int = 300, min_frequency:
 
     tokenizer.train(files=[train_file], trainer=trainer)
     return tokenizer
+
+
+def train_glyberta_wordlevel(train_file: str, max_length: int | None = None):
+    """Train the GlyBERTa-style WordLevel tokenizer on raw glycan strings.
+
+    The tokenizer learns its vocabulary from the training split only. A split
+    pre-tokenizer isolates linkage groups such as ``(b1-4)`` and branch markers
+    such as ``[`` and ``]``, which mirrors the original GlyBERTa "glyco-letter"
+    idea while packaging it for this project's Hugging Face workflow.
+    """
+    with open(train_file, "r", encoding="utf-8") as file:
+        train_sequences = [line.strip() for line in file if line.strip()]
+
+    if not train_sequences:
+        raise ValueError(f"No training sequences found in {train_file}")
+
+    backend_tokenizer = Tokenizer(WordLevel(unk_token="<unk>"))
+    backend_tokenizer.pre_tokenizer = Split(
+        pattern=Regex(GLYBERTA_GLYCOLETTER_PATTERN),
+        behavior="isolated",
+    )
+
+    trainer = WordLevelTrainer(special_tokens=SPECIAL_TOKENS)
+    backend_tokenizer.train_from_iterator(train_sequences, trainer=trainer)
+    backend_tokenizer.post_processor = RobertaProcessing(
+        sep=("</s>", backend_tokenizer.token_to_id("</s>")),
+        cls=("<s>", backend_tokenizer.token_to_id("<s>")),
+    )
+
+    if max_length is not None:
+        backend_tokenizer.enable_truncation(max_length=max_length)
+
+    tokenizer_kwargs = {
+        "tokenizer_object": backend_tokenizer,
+        "bos_token": "<s>",
+        "eos_token": "</s>",
+        "sep_token": "</s>",
+        "cls_token": "<s>",
+        "unk_token": "<unk>",
+        "pad_token": "<pad>",
+        "mask_token": "<mask>",
+    }
+    if max_length is not None:
+        tokenizer_kwargs["model_max_length"] = max_length
+
+    hf_tokenizer = PreTrainedTokenizerFast(**tokenizer_kwargs)
+
+    return backend_tokenizer, hf_tokenizer

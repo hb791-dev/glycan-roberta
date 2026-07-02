@@ -3,9 +3,10 @@
 This repository contains a workflow for pretraining and evaluating
 RoBERTa-style masked-language models on glycan sequences.
 
-The project compares three tokenizer strategies:
+The project compares four tokenizer strategies:
 
 - `byte_bpe`
+- `glyberta`
 - `manual`
 - `hybrid_char_bpe`
 
@@ -49,6 +50,7 @@ glycan-roberta/
 │   ├── 01_data_splitting.ipynb
 │   ├── 02_tokenizer_generation/
 │   │   ├── 02a_byte_bpe_gen.ipynb
+│   │   ├── 02b_glyberta_gen.ipynb
 │   │   ├── 02c_manual_gen.ipynb
 │   │   └── 02d_hybrid_char_bpe_gen.ipynb
 │   ├── 03_dataset_preprocessing.ipynb
@@ -83,14 +85,17 @@ MyDrive/ProjectRoot/
 │       └── split_preview.csv
 ├── tokenizers/
 │   ├── byte_bpe/
+│   ├── glyberta/
 │   ├── hybrid_char_bpe/
 │   └── manual/
 ├── tokenized_datasets/
 │   ├── byte_bpe/
+│   ├── glyberta/
 │   ├── hybrid_char_bpe/
 │   └── manual/
 ├── checkpoints/
 │   ├── byte_bpe/
+│   ├── glyberta/
 │   ├── hybrid_char_bpe/
 │   └── manual/
 ├── results/
@@ -136,6 +141,19 @@ Purpose:
 Main outputs:
 - tokenizer files
 - merges and vocab
+- inspection preview
+- tokenizer configuration summary
+
+### `02b_glyberta_gen.ipynb`
+
+Purpose:
+- train the GlyBERTa-style WordLevel tokenizer on the training split
+- isolate glyco-letters such as linkage groups and branch markers before
+  learning the vocabulary
+
+Main outputs:
+- tokenizer files
+- vocab
 - inspection preview
 - tokenizer configuration summary
 
@@ -255,11 +273,12 @@ Notes:
   but the similarity inputs are the user-defined glycans configured in the
   notebook
 
-## Tokenizer Settings Used So Far
+## Tokenizer Settings In This Workflow
 
 Current tokenizer settings in this rebuild:
 
 - `byte_bpe`: `v300_m2`
+- `glyberta`: `v1_train_only`
 - `manual`: `v1_train_only`
 - `hybrid_char_bpe`: `v70_m2`
 
@@ -313,6 +332,8 @@ Architectures observed by tokenizer family:
   runs recorded for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
 - `byte_bpe`:
   runs recorded for `L6_H512_A8`
+- `glyberta`:
+  no runs recorded in the current registry yet
 
 Run modes seen in the registry:
 
@@ -325,8 +346,8 @@ Notes:
   fields are not fully populated, so the architecture summary above is based on
   rows with recorded model dimensions
 - at the time this README was updated, the registry shows completed runs for
-  all three architecture families and at least one in-progress historical run
-  in the `L4_H384_A6` family
+  the original three tokenizer families and at least one in-progress
+  historical run in the `L4_H384_A6` family
 
 ## Evaluation Workflow
 
