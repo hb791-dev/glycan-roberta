@@ -250,8 +250,8 @@ Notes:
 - `src/similarity.py` now handles model loading support, validation, preview
   sequence collection, similarity tables, heatmap generation, and output
   writing
-- the notebook uses an explicit `MODEL_DIR` and `OUTPUT_NAME` instead of
-  selecting runs from `registry/run_index.csv`
+- the notebook uses one explicit `MODEL_DIR` and derives the output folder
+  name automatically from that checkpoint path
 - outputs are saved under `results/similarity/`
 
 ## Tokenizer Settings Used So Far
