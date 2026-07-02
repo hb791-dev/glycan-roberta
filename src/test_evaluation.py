@@ -327,6 +327,128 @@ def _build_monotonic_pr_curve(binary_true, scores):
     return unique_recall, monotonic_precision, float(average_precision)
 
 
+def _build_roc_curve(binary_true, scores):
+    """Return an ROC curve and AUC with stable edge-case handling."""
+    positive_count = int(binary_true.sum())
+
+    if positive_count == 0:
+        return np.array([0.0, 1.0]), np.array([0.0, 0.0]), 0.0
+
+    if positive_count == len(binary_true):
+        return np.array([0.0, 1.0]), np.array([1.0, 1.0]), 1.0
+
+    fpr, tpr, _ = roc_curve(binary_true, scores)
+    roc_auc = auc(fpr, tpr)
+
+    return fpr, tpr, float(roc_auc)
+
+
+def plot_top1_correctness_roc_curves(
+    y_true,
+    y_pred,
+    y_probs,
+    tokenizer,
+    save_path=None,
+    fpr_grid_points: int = 201,
+):
+    """Plot macro and support-weighted ROC curves for top-1 correctness.
+
+    Each true token class is evaluated separately. Within a class, a masked
+    position is treated as a positive example when the model's top-1 prediction
+    is correct and as a negative example otherwise. The score is the top-1
+    prediction confidence. Per-class ROC curves are interpolated onto a shared
+    false-positive-rate grid before macro and support-weighted aggregation.
+    """
+    top1_frame = build_top1_correctness_frame(y_true, y_pred, y_probs, tokenizer)
+    class_ids = np.unique(y_true)
+    fpr_grid = np.linspace(0.0, 1.0, fpr_grid_points)
+
+    per_class_rows = []
+    class_tprs = []
+    class_supports = []
+
+    for class_id in class_ids:
+        class_mask = top1_frame["true_token_id"].to_numpy() == int(class_id)
+        class_rows = top1_frame.loc[class_mask]
+        class_correct = class_rows["top1_correct"].to_numpy()
+        class_scores = class_rows["top1_confidence"].to_numpy()
+
+        fpr, tpr, roc_auc = _build_roc_curve(class_correct, class_scores)
+        interpolated_tpr = np.interp(fpr_grid, fpr, tpr)
+
+        support = int(class_mask.sum())
+        correct_count = int(class_correct.sum())
+
+        class_tprs.append(interpolated_tpr)
+        class_supports.append(support)
+        per_class_rows.append(
+            {
+                "token_id": int(class_id),
+                "token": class_rows["true_token"].iloc[0],
+                "support": support,
+                "correct_count": correct_count,
+                "incorrect_count": support - correct_count,
+                "top1_accuracy": correct_count / support if support else 0.0,
+                "auc": roc_auc,
+            }
+        )
+
+    class_tpr_matrix = np.vstack(class_tprs)
+    class_supports = np.asarray(class_supports, dtype=float)
+    per_class_summary = pd.DataFrame(per_class_rows).sort_values("support", ascending=False)
+
+    macro_tpr = class_tpr_matrix.mean(axis=0)
+    weighted_tpr = np.average(class_tpr_matrix, axis=0, weights=class_supports)
+    macro_auc = float(per_class_summary["auc"].mean())
+    weighted_auc = float(np.average(per_class_summary["auc"], weights=per_class_summary["support"]))
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(
+        fpr_grid,
+        macro_tpr,
+        label="Macro",
+        linewidth=2,
+    )
+    plt.plot(
+        fpr_grid,
+        weighted_tpr,
+        label="Weighted",
+        linewidth=2,
+    )
+    plt.plot([0, 1], [0, 1], linestyle="--", color="black")
+    plt.xlabel("False positive rate for correct top-1 predictions")
+    plt.ylabel("True positive rate for correct top-1 predictions")
+    plt.title("All-token top-1 correctness ROC curves")
+    plt.xlim(0.0, 1.0)
+    plt.ylim(0.0, 1.05)
+    plt.legend(loc="lower right")
+    plt.grid(alpha=0.3)
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+    aggregate_summary = pd.DataFrame(
+        [
+            {
+                "aggregation": "macro",
+                "auc": macro_auc,
+                "num_classes": int(len(per_class_summary)),
+                "num_examples": int(per_class_summary["support"].sum()),
+            },
+            {
+                "aggregation": "weighted",
+                "auc": weighted_auc,
+                "num_classes": int(len(per_class_summary)),
+                "num_examples": int(per_class_summary["support"].sum()),
+            },
+        ]
+    )
+
+    return aggregate_summary, per_class_summary
+
+
 def plot_top1_correctness_pr_curves(
     y_true,
     y_pred,
