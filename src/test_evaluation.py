@@ -290,6 +290,8 @@ def compute_per_class_metrics(y_true, y_pred, tokenizer) -> pd.DataFrame:
 def build_top1_correctness_frame(y_true, y_pred, y_probs, tokenizer) -> pd.DataFrame:
     """Build a token-level table for top-1 correctness analysis."""
     row_indices = np.arange(len(y_pred))
+    # Score each masked position by the probability assigned to the model's
+    # single best guess, regardless of whether that guess is correct.
     top1_confidence = y_probs[row_indices, y_pred]
 
     return pd.DataFrame(
@@ -317,11 +319,15 @@ def _build_monotonic_pr_curve(binary_true, scores):
     precision, recall, _ = precision_recall_curve(binary_true, scores)
     average_precision = average_precision_score(binary_true, scores)
 
+    # sklearn returns recall in descending order. Flip it so recall increases
+    # from left to right before de-duplicating and interpolating.
     recall = recall[::-1]
     precision = precision[::-1]
 
     unique_recall = np.unique(recall)
     max_precision = np.array([precision[recall == value].max() for value in unique_recall])
+    # Build the standard interpolated PR envelope so precision cannot improve
+    # as the decision threshold becomes less strict.
     monotonic_precision = np.maximum.accumulate(max_precision[::-1])[::-1]
 
     return unique_recall, monotonic_precision, float(average_precision)
@@ -331,6 +337,8 @@ def _build_roc_curve(binary_true, scores):
     """Return an ROC curve and AUC with stable edge-case handling."""
     positive_count = int(binary_true.sum())
 
+    # Keep degenerate classes plottable. This mirrors the PR helper above and
+    # avoids downstream interpolation code having to special-case them.
     if positive_count == 0:
         return np.array([0.0, 1.0]), np.array([0.0, 0.0]), 0.0
 
@@ -374,6 +382,8 @@ def plot_top1_correctness_roc_curves(
         class_scores = class_rows["top1_confidence"].to_numpy()
 
         fpr, tpr, roc_auc = _build_roc_curve(class_correct, class_scores)
+        # Interpolate onto a shared grid so per-class curves can be averaged
+        # pointwise for macro and support-weighted summaries.
         interpolated_tpr = np.interp(fpr_grid, fpr, tpr)
 
         support = int(class_mask.sum())
@@ -483,6 +493,8 @@ def plot_top1_correctness_pr_curves(
             class_correct,
             class_scores,
         )
+        # As with ROC, we average class curves only after moving them onto a
+        # common recall grid.
         interpolated_precision = np.interp(recall_grid, recall, precision)
 
         support = int(class_mask.sum())
