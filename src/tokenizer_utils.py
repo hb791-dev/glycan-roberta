@@ -41,10 +41,13 @@ HUGGINGFACE_FAST_PATTERN = (
     r"GlcN|Fru|Fuc|Gal|Glc|Hex|Kdn|Man|Xyl|\d+S|[ab?][0-9?]-[0-9?]|\|[0-9?]+|[\(\)\[\]]|[ab]"
 )
 
-# GlyBERTa-style tokenization treats whole linkages and square-bracket branch
-# markers as standalone tokens while leaving the monosaccharide text between
-# them intact as the other token type.
-GLYBERTA_GLYCOLETTER_PATTERN = r"\([^()]*\)|\[|\]"
+# The original GlyBERTa demo strings use parenthesized linkages such as
+# ``Gal(b1-4)GlcNAc``. This project's corpus instead stores compact strings such
+# as ``Galb1-4GlcNAc`` with inline linkage text. To preserve the same
+# glyco-letter idea on this corpus, the adapted pattern isolates inline
+# linkages plus branch delimiters, while leaving residue text between them
+# untouched.
+GLYBERTA_COMPACT_GLYCOLETTER_PATTERN = r"[ab?][0-9?]-[0-9?]|[\(\)\[\]]"
 
 SPECIAL_TOKENS = ["<s>", "<pad>", "</s>", "<unk>", "<mask>"]
 
@@ -235,12 +238,13 @@ def train_hybrid_char_bpe(train_file: str, vocab_size: int = 300, min_frequency:
 
 
 def train_glyberta_wordlevel(train_file: str, max_length: int | None = None):
-    """Train the GlyBERTa-style WordLevel tokenizer on raw glycan strings.
+    """Train the project-adapted GlyBERTa-style WordLevel tokenizer.
 
-    The tokenizer learns its vocabulary from the training split only. A split
-    pre-tokenizer isolates linkage groups such as ``(b1-4)`` and branch markers
-    such as ``[`` and ``]``, which mirrors the original GlyBERTa "glyco-letter"
-    idea while packaging it for this project's Hugging Face workflow.
+    The tokenizer learns its vocabulary from the training split only. Instead
+    of porting the original GlyBERTa split rule literally, this helper adapts
+    the same "glyco-letter" idea to the compact IUPAC strings used in this
+    project by isolating inline linkage text like ``b1-4`` and branch
+    delimiters like ``(``, ``)``, ``[``, and ``]``.
     """
     with open(train_file, "r", encoding="utf-8") as file:
         train_sequences = [line.strip() for line in file if line.strip()]
@@ -250,7 +254,7 @@ def train_glyberta_wordlevel(train_file: str, max_length: int | None = None):
 
     backend_tokenizer = Tokenizer(WordLevel(unk_token="<unk>"))
     backend_tokenizer.pre_tokenizer = Split(
-        pattern=Regex(GLYBERTA_GLYCOLETTER_PATTERN),
+        pattern=Regex(GLYBERTA_COMPACT_GLYCOLETTER_PATTERN),
         behavior="isolated",
     )
 

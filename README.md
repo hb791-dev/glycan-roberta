@@ -148,8 +148,8 @@ Main outputs:
 
 Purpose:
 - train the GlyBERTa-style WordLevel tokenizer on the training split
-- isolate glyco-letters such as linkage groups and branch markers before
-  learning the vocabulary
+- adapt the GlyBERTa glyco-letter idea to this project's compact glycan format
+- isolate inline linkage text and branch markers before learning the vocabulary
 
 Main outputs:
 - tokenizer files
