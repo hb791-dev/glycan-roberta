@@ -7,6 +7,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 from tokenizers import Regex, Tokenizer
 from tokenizers.models import BPE
 from tokenizers.models import WordLevel
@@ -172,6 +173,83 @@ def tokenize_compact_iupac(glycan_string: str):
 def split_glycan_string(glycan_string: str):
     """Return only token text values from the manual parser."""
     return [token.value for token in tokenize_compact_iupac(glycan_string)]
+
+
+def split_glyberta_compact_string(glycan_string: str):
+    """Split one compact glycan string with the GlyBERTa-style regex rule."""
+    parts = re.split(f"({GLYBERTA_COMPACT_GLYCOLETTER_PATTERN})", glycan_string)
+    return [part for part in parts if part and not part.isspace()]
+
+
+def _coerce_vocab_tokens(vocab_or_tokenizer) -> set[str]:
+    """Accept a vocab dict, token list, or HF tokenizer and return token text."""
+    if hasattr(vocab_or_tokenizer, "get_vocab"):
+        return set(vocab_or_tokenizer.get_vocab().keys())
+
+    if isinstance(vocab_or_tokenizer, dict):
+        return set(vocab_or_tokenizer.keys())
+
+    return set(vocab_or_tokenizer)
+
+
+def audit_oov_tokens(
+    sequences,
+    vocab_or_tokenizer,
+    splitter,
+    max_example_rows: int = 20,
+    top_n_tokens: int = 25,
+):
+    """Return summary tables for tokens missing from one tokenizer vocabulary."""
+    vocab_tokens = _coerce_vocab_tokens(vocab_or_tokenizer)
+
+    total_tokens = 0
+    total_oov_tokens = 0
+    sequences_with_oov = 0
+    oov_counter = Counter()
+    example_rows = []
+
+    for sequence in sequences:
+        tokens = splitter(sequence)
+        total_tokens += len(tokens)
+
+        oov_tokens = [token for token in tokens if token not in vocab_tokens]
+        if not oov_tokens:
+            continue
+
+        sequences_with_oov += 1
+        total_oov_tokens += len(oov_tokens)
+        oov_counter.update(oov_tokens)
+
+        if len(example_rows) < max_example_rows:
+            example_rows.append(
+                {
+                    "sequence": sequence,
+                    "tokens": " | ".join(tokens[:40]),
+                    "oov_tokens": " | ".join(oov_tokens),
+                    "oov_count": len(oov_tokens),
+                }
+            )
+
+    summary = {
+        "num_sequences": len(sequences),
+        "sequences_with_oov": sequences_with_oov,
+        "sequence_oov_rate": sequences_with_oov / len(sequences) if sequences else 0.0,
+        "total_tokens": total_tokens,
+        "total_oov_tokens": total_oov_tokens,
+        "token_oov_rate": total_oov_tokens / total_tokens if total_tokens else 0.0,
+        "unique_oov_tokens": len(oov_counter),
+    }
+
+    oov_df = pd.DataFrame(
+        [
+            {"token": token, "count": count}
+            for token, count in oov_counter.most_common(top_n_tokens)
+        ]
+    )
+    examples_df = pd.DataFrame(example_rows)
+    summary_df = pd.DataFrame([summary])
+
+    return summary_df, oov_df, examples_df
 
 
 def inspect_tokenizer(tokenizer, sample_glycan: str, tokenizer_name: str = "Tokenizer") -> None:
