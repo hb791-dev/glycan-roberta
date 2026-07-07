@@ -698,6 +698,11 @@ def get_core_probe_cases():
                     "expected_token": "GlcNAc",
                     "target_token_type": "residue",
                 },
+                "glyberta": {
+                    "masked_sequence": "Galb1-4<mask>b1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
+                    "expected_token": "GlcNAc",
+                    "target_token_type": "residue",
+                },
                 "hybrid_char_bpe": {
                     "masked_sequence": "Galb1-4<mask>b1-2Mana1-3Manb1-4GlcNAcb1-4GlcNAc",
                     "expected_token": "GlcNAc",
@@ -717,6 +722,11 @@ def get_core_probe_cases():
             "biological_target": "Gal",
             "tokenizer_targets": {
                 "manual": {
+                    "masked_sequence": "NeuAca2-3<mask>b1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
+                    "expected_token": "Gal",
+                    "target_token_type": "residue",
+                },
+                "glyberta": {
                     "masked_sequence": "NeuAca2-3<mask>b1-4GlcNAcb1-2Mana1-3(Galb1-4GlcNAcb1-2Mana1-6)Manb1-4GlcNAc",
                     "expected_token": "Gal",
                     "target_token_type": "residue",
@@ -744,6 +754,11 @@ def get_core_probe_cases():
                     "expected_token": "Man",
                     "target_token_type": "residue",
                 },
+                "glyberta": {
+                    "masked_sequence": "Mana1-6(Mana1-3)<mask>b1-4GlcNAcb1-4GlcNAc",
+                    "expected_token": "Man",
+                    "target_token_type": "residue",
+                },
                 "hybrid_char_bpe": {
                     "masked_sequence": "Mana1-6(Mana1-3)<mask>b1-4GlcNAcb1-4GlcNAc",
                     "expected_token": "Man",
@@ -763,6 +778,11 @@ def get_core_probe_cases():
             "biological_target": "Fuc",
             "tokenizer_targets": {
                 "manual": {
+                    "masked_sequence": "<mask>a1-3Galb1-4GlcNAcb1-6Man",
+                    "expected_token": "Fuc",
+                    "target_token_type": "residue",
+                },
+                "glyberta": {
                     "masked_sequence": "<mask>a1-3Galb1-4GlcNAcb1-6Man",
                     "expected_token": "Fuc",
                     "target_token_type": "residue",
@@ -790,6 +810,11 @@ def get_core_probe_cases():
                     "expected_token": "NeuAc",
                     "target_token_type": "residue",
                 },
+                "glyberta": {
+                    "masked_sequence": "<mask>a2-3Galb1-4GlcNAc",
+                    "expected_token": "NeuAc",
+                    "target_token_type": "residue",
+                },
                 "hybrid_char_bpe": {
                     "masked_sequence": "<mask>Aca2-3Galb1-4GlcNAc",
                     "expected_token": "Neu",
@@ -808,6 +833,18 @@ def get_core_probe_cases():
 def get_tokenizer_specific_roc_pr_tokens():
     """Return ROC and PR token candidates that make sense for each tokenizer."""
     return {
+        "glyberta": [
+            "GlcNAc",
+            "Gal",
+            "Man",
+            "Fuc",
+            "NeuAc",
+            "GalNAc",
+            "Glc",
+            "GlcA",
+            "a1-3",
+            "b1-4",
+        ],
         "manual": [
             "GlcNAc",
             "Gal",
