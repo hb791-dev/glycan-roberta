@@ -150,24 +150,40 @@ Purpose:
 - train the GlyBERTa-style WordLevel tokenizer on the training split
 - adapt the GlyBERTa glyco-letter idea to this project's compact glycan format
 - isolate inline linkage text and branch markers before learning the vocabulary
+- run an OOV audit on the train, validation, and test splits using the
+  GlyBERTa split rule
 
 Main outputs:
 - tokenizer files
 - vocab
 - inspection preview
 - tokenizer configuration summary
+
+Notes:
+- includes an `OOV audit` section that reports split-level coverage, top OOV
+  tokens, and example sequences with OOV tokens
+- the audit is an in-notebook check and does not save a separate artifact by
+  default
 
 ### `02c_manual_gen.ipynb`
 
 Purpose:
 - build the manual glycan tokenizer from the training split
 - save a fixed vocabulary and matching Hugging Face tokenizer
+- run an OOV audit on the train, validation, and test splits using the manual
+  parser split rule
 
 Main outputs:
 - tokenizer files
 - vocab
 - inspection preview
 - tokenizer configuration summary
+
+Notes:
+- includes an `OOV audit` section that reports split-level coverage, top OOV
+  tokens, and example sequences with OOV tokens
+- the audit is an in-notebook check and does not save a separate artifact by
+  default
 
 ### `02d_hybrid_char_bpe_gen.ipynb`
 
@@ -241,10 +257,18 @@ Main outputs:
 - `roc_auc_summary.csv`
 - `pr_curves.png`
 - `pr_auc_summary.csv`
+- `top1_correctness_roc_curves.png`
+- `top1_correctness_roc_summary.csv`
+- `top1_correctness_roc_per_class.csv`
+- `top1_correctness_pr_curves.png`
+- `top1_correctness_pr_summary.csv`
+- `top1_correctness_pr_per_class.csv`
 - `qualitative_probe_results.csv`
 
 Notes:
 - ROC and precision-recall plots use tokenizer-specific class selections
+- notebook 6 also saves all-token top-1 correctness ROC and PR outputs based
+  on whether the top-1 prediction was correct
 - qualitative probes are tokenizer-specific because token boundaries differ
   across tokenizers
 
@@ -333,7 +357,7 @@ Architectures observed by tokenizer family:
 - `byte_bpe`:
   runs recorded for `L6_H512_A8`
 - `glyberta`:
-  no runs recorded in the current registry yet
+  runs recorded for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
 
 Run modes seen in the registry:
 
@@ -346,8 +370,7 @@ Notes:
   fields are not fully populated, so the architecture summary above is based on
   rows with recorded model dimensions
 - at the time this README was updated, the registry shows completed runs for
-  the original three tokenizer families and at least one in-progress
-  historical run in the `L4_H384_A6` family
+  all four tokenizer families and at least one historical `L4_H384_A6` run
 
 ## Evaluation Workflow
 
@@ -364,6 +387,7 @@ The current evaluation workflow separates:
   - macro and weighted precision/recall/F1
   - per-class metrics
   - tokenizer-specific ROC and precision-recall plots
+  - all-token top-1 correctness ROC and PR analyses
   - qualitative-probe examples
 
 ## Reproducibility Notes
@@ -388,10 +412,10 @@ accordingly.
 This rebuild currently includes:
 
 - all six main notebooks
-- tokenizer generation for all three tokenizer families
-- preprocessing for all three tokenizer families
-- pretraining runs for all three tokenizer families
-- validation diagnostics for all three tokenizer families
+- tokenizer generation for all four tokenizer families
+- preprocessing for all four tokenizer families
+- pretraining runs for all four tokenizer families
+- validation diagnostics for all four tokenizer families
 - test-set evaluation outputs for the tokenizer comparison workflow
 
 ## Notes
