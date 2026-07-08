@@ -117,12 +117,42 @@ def build_rarity_bin_summary(merged_df):
         )
         .reset_index()
     )
-    return grouped.sort_values("support_bin").reset_index(drop=True)
+    grouped = grouped.sort_values("support_bin").reset_index(drop=True)
+    total_classes = grouped["num_token_classes"].sum()
+    if total_classes > 0:
+        grouped["share_of_token_classes"] = grouped["num_token_classes"] / total_classes
+    else:
+        grouped["share_of_token_classes"] = 0.0
+    return grouped
 
 
 def build_rare_token_table(merged_df, rare_support_max=24):
     """Return the rare-token rows sorted from smallest support upward."""
     rare_df = merged_df.loc[merged_df["support"] <= int(rare_support_max)].copy()
+    if {"incorrect_count", "support"}.issubset(rare_df.columns):
+        rare_df["top1_error_rate"] = np.where(
+            rare_df["support"] > 0,
+            rare_df["incorrect_count"] / rare_df["support"],
+            np.nan,
+        )
+
+    display_columns = [
+        "token_id",
+        "token",
+        "support",
+        "support_bin",
+        "precision",
+        "recall",
+        "f1",
+        "top1_accuracy",
+        "top1_error_rate",
+        "average_precision",
+        "auc",
+        "correct_count",
+        "incorrect_count",
+    ]
+    available_columns = [column_name for column_name in display_columns if column_name in rare_df.columns]
+    rare_df = rare_df[available_columns]
     return rare_df.sort_values(["support", "f1", "token"], ascending=[True, True, True]).reset_index(drop=True)
 
 
@@ -175,19 +205,31 @@ def plot_support_distribution(merged_df, output_path):
         .reset_index(name="num_token_classes")
     )
     counts = counts.sort_values("support_bin").reset_index(drop=True)
+    x_labels = counts["support_bin"].astype(str)
 
     plt.figure(figsize=(8, 5))
-    plt.bar(counts["support_bin"].astype(str), counts["num_token_classes"], color="#4C72B0")
+    bars = plt.bar(x_labels, counts["num_token_classes"], color="#4C72B0")
     plt.xlabel("Support bin")
     plt.ylabel("Number of token classes")
-    plt.title("Token classes by support bin")
+    plt.title("How many token classes fall in each support bin?")
     plt.grid(axis="y", alpha=0.2)
+
+    for bar, count in zip(bars, counts["num_token_classes"]):
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.3,
+            str(int(count)),
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close()
 
 
-def plot_support_metric_scatter(merged_df, metric_col, output_path):
+def plot_support_metric_scatter(merged_df, metric_col, output_path, rare_support_max=None):
     """Plot one metric against raw support."""
     output_path = Path(output_path)
     metric_labels = {
@@ -197,7 +239,32 @@ def plot_support_metric_scatter(merged_df, metric_col, output_path):
     }
 
     plt.figure(figsize=(8, 5))
-    plt.scatter(merged_df["support"], merged_df[metric_col], alpha=0.7, color="#DD8452")
+    if rare_support_max is not None:
+        rare_mask = merged_df["support"] <= int(rare_support_max)
+        plt.scatter(
+            merged_df.loc[~rare_mask, "support"],
+            merged_df.loc[~rare_mask, metric_col],
+            alpha=0.7,
+            color="#4C72B0",
+            label=f"Support > {int(rare_support_max)}",
+        )
+        plt.scatter(
+            merged_df.loc[rare_mask, "support"],
+            merged_df.loc[rare_mask, metric_col],
+            alpha=0.85,
+            color="#DD8452",
+            label=f"Support <= {int(rare_support_max)}",
+        )
+        plt.axvline(
+            int(rare_support_max),
+            color="#6C6C6C",
+            linestyle="--",
+            linewidth=1.2,
+        )
+        plt.legend(frameon=False)
+    else:
+        plt.scatter(merged_df["support"], merged_df[metric_col], alpha=0.7, color="#DD8452")
+
     plt.xlabel("Support in masked test set")
     plt.ylabel(metric_labels.get(metric_col, metric_col))
     plt.title(f"{metric_labels.get(metric_col, metric_col)} vs support")
@@ -215,14 +282,27 @@ def plot_metric_by_support_bin(bin_summary_df, metric_col, output_path):
         "mean_average_precision": "Mean average precision",
         "mean_auc": "Mean ROC AUC",
     }
+    plot_df = bin_summary_df.sort_values("support_bin").reset_index(drop=True)
+    x_labels = plot_df["support_bin"].astype(str)
 
     plt.figure(figsize=(8, 5))
-    plt.bar(bin_summary_df["support_bin"], bin_summary_df[metric_col], color="#55A868")
+    bars = plt.bar(x_labels, plot_df[metric_col], color="#55A868")
     plt.xlabel("Support bin")
     plt.ylabel(metric_labels.get(metric_col, metric_col))
     plt.title(f"{metric_labels.get(metric_col, metric_col)} by support bin")
     plt.ylim(0.0, 1.05)
     plt.grid(axis="y", alpha=0.2)
+
+    for bar, value in zip(bars, plot_df[metric_col]):
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.02,
+            f"{value:.2f}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+        )
+
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close()

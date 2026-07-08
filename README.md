@@ -310,11 +310,15 @@ Notes:
   inference
 - the notebook merges the saved class-level outputs into one main rarity table
   instead of showing several near-duplicate tables separately
+- the notebook display is intentionally lighter now: one quick input check, one
+  support-bin summary table, and one rare-token spotlight table
 - rarity is defined by per-class support in masked test-set `y_true`
 - the default support bins are meant to be easy to read, not mathematically
   final
 - the support-distribution figure is a support-bin count view, and the scatter
   plots use raw support values rather than `log10(support)`
+- the scatter plots also mark the rare-token cutoff directly so it is easier to
+  see where the low-support region starts
 
 ### `07_similarity_analysis.ipynb`
 
