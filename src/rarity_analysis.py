@@ -42,7 +42,17 @@ def load_rarity_inputs(
 def merge_rarity_tables(per_class_metrics, top1_roc_per_class, top1_pr_per_class):
     """Merge the saved class-level tables into one notebook-friendly frame."""
     merged = per_class_metrics.merge(
-        top1_roc_per_class[["token_id", "token", "support", "top1_accuracy", "auc"]],
+        top1_roc_per_class[
+            [
+                "token_id",
+                "token",
+                "support",
+                "correct_count",
+                "incorrect_count",
+                "top1_accuracy",
+                "auc",
+            ]
+        ],
         on=["token_id", "token", "support"],
         how="left",
     )
@@ -57,6 +67,7 @@ def merge_rarity_tables(per_class_metrics, top1_roc_per_class, top1_pr_per_class
 def assign_support_bins(merged_df, support_bins):
     """Attach readable support-bin labels to the merged class table."""
     df = merged_df.copy()
+    ordered_labels = []
 
     def _label_for_support(support):
         support = int(support)
@@ -67,7 +78,18 @@ def assign_support_bins(merged_df, support_bins):
                 return f"{lower}-{upper}"
         return "outside_bins"
 
+    for lower, upper in support_bins:
+        if upper is None:
+            ordered_labels.append(f"{lower}+")
+        else:
+            ordered_labels.append(f"{lower}-{upper}")
+
     df["support_bin"] = df["support"].map(_label_for_support)
+    df["support_bin"] = pd.Categorical(
+        df["support_bin"],
+        categories=ordered_labels,
+        ordered=True,
+    )
     return df
 
 
@@ -81,7 +103,7 @@ def add_rarity_flags(merged_df, rare_support_max=24):
 def build_rarity_bin_summary(merged_df):
     """Summarize support, F1, AP, and AUC within each support bin."""
     grouped = (
-        merged_df.groupby("support_bin", dropna=False)
+        merged_df.groupby("support_bin", dropna=False, sort=False, observed=False)
         .agg(
             num_token_classes=("token", "count"),
             total_support=("support", "sum"),
@@ -95,18 +117,13 @@ def build_rarity_bin_summary(merged_df):
         )
         .reset_index()
     )
-    return grouped
+    return grouped.sort_values("support_bin").reset_index(drop=True)
 
 
 def build_rare_token_table(merged_df, rare_support_max=24):
     """Return the rare-token rows sorted from smallest support upward."""
     rare_df = merged_df.loc[merged_df["support"] <= int(rare_support_max)].copy()
     return rare_df.sort_values(["support", "f1", "token"], ascending=[True, True, True]).reset_index(drop=True)
-
-
-def _safe_log10_support(series):
-    """Use log support for scatter plots without blowing up on tiny counts."""
-    return np.log10(np.clip(series.astype(float), a_min=1.0, a_max=None))
 
 
 def _safe_corr(x_values, y_values):
@@ -124,7 +141,7 @@ def compute_rarity_summary(merged_df, test_summary, rare_support_max=24):
     """Build one compact summary dictionary for the notebook and saved JSON."""
     rare_df = merged_df.loc[merged_df["support"] <= int(rare_support_max)]
     common_df = merged_df.loc[merged_df["support"] >= 100]
-    log_support = _safe_log10_support(merged_df["support"])
+    support_values = merged_df["support"].astype(float).to_numpy()
 
     summary = {
         "num_token_classes": int(len(merged_df)),
@@ -135,9 +152,9 @@ def compute_rarity_summary(merged_df, test_summary, rare_support_max=24):
         "max_support": int(merged_df["support"].max()),
         "mean_f1_support_lt25": float(rare_df["f1"].mean()) if not rare_df.empty else float("nan"),
         "mean_f1_support_ge100": float(common_df["f1"].mean()) if not common_df.empty else float("nan"),
-        "corr_log_support_f1": _safe_corr(log_support, merged_df["f1"]),
-        "corr_log_support_average_precision": _safe_corr(log_support, merged_df["average_precision"]),
-        "corr_log_support_auc": _safe_corr(log_support, merged_df["auc"]),
+        "corr_support_f1": _safe_corr(support_values, merged_df["f1"]),
+        "corr_support_average_precision": _safe_corr(support_values, merged_df["average_precision"]),
+        "corr_support_auc": _safe_corr(support_values, merged_df["auc"]),
         "macro_precision": float(test_summary["macro_precision"]),
         "macro_recall": float(test_summary["macro_recall"]),
         "macro_f1": float(test_summary["macro_f1"]),
@@ -150,33 +167,38 @@ def compute_rarity_summary(merged_df, test_summary, rare_support_max=24):
 
 
 def plot_support_distribution(merged_df, output_path):
-    """Plot how many token classes land at each support level."""
+    """Plot how many token classes land in each support bin."""
     output_path = Path(output_path)
+    counts = (
+        merged_df.groupby("support_bin", sort=False, observed=False)["token"]
+        .count()
+        .reset_index(name="num_token_classes")
+    )
+    counts = counts.sort_values("support_bin").reset_index(drop=True)
+
     plt.figure(figsize=(8, 5))
-    plt.hist(merged_df["support"], bins=20, color="#4C72B0", edgecolor="white")
-    plt.xlabel("Support in masked test set")
+    plt.bar(counts["support_bin"].astype(str), counts["num_token_classes"], color="#4C72B0")
+    plt.xlabel("Support bin")
     plt.ylabel("Number of token classes")
-    plt.title("Token-class support distribution")
-    plt.grid(alpha=0.2)
+    plt.title("Token classes by support bin")
+    plt.grid(axis="y", alpha=0.2)
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.show()
     plt.close()
 
 
 def plot_support_metric_scatter(merged_df, metric_col, output_path):
-    """Plot one metric against log support so the support trend is easier to see."""
+    """Plot one metric against raw support."""
     output_path = Path(output_path)
     metric_labels = {
         "f1": "F1",
         "average_precision": "Average precision",
         "auc": "ROC AUC",
     }
-    df = merged_df.copy()
-    df["log10_support"] = _safe_log10_support(df["support"])
 
     plt.figure(figsize=(8, 5))
-    plt.scatter(df["log10_support"], df[metric_col], alpha=0.7, color="#DD8452")
-    plt.xlabel("log10(support)")
+    plt.scatter(merged_df["support"], merged_df[metric_col], alpha=0.7, color="#DD8452")
+    plt.xlabel("Support in masked test set")
     plt.ylabel(metric_labels.get(metric_col, metric_col))
     plt.title(f"{metric_labels.get(metric_col, metric_col)} vs support")
     plt.grid(alpha=0.2)

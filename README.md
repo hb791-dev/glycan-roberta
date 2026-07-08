@@ -308,9 +308,13 @@ Main outputs:
 Notes:
 - this notebook reads saved outputs from notebook 6 and does not rerun model
   inference
+- the notebook merges the saved class-level outputs into one main rarity table
+  instead of showing several near-duplicate tables separately
 - rarity is defined by per-class support in masked test-set `y_true`
 - the default support bins are meant to be easy to read, not mathematically
   final
+- the support-distribution figure is a support-bin count view, and the scatter
+  plots use raw support values rather than `log10(support)`
 
 ### `07_similarity_analysis.ipynb`
 
