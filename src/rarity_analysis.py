@@ -156,6 +156,36 @@ def build_rare_token_table(merged_df, rare_support_max=24):
     return rare_df.sort_values(["support", "f1", "token"], ascending=[True, True, True]).reset_index(drop=True)
 
 
+def build_problem_rare_token_table(merged_df, rare_support_max=24):
+    """Return rare tokens with real errors, ranked by worst F1 first."""
+    rare_df = build_rare_token_table(merged_df, rare_support_max=rare_support_max).copy()
+
+    if "incorrect_count" in rare_df.columns:
+        rare_df = rare_df.loc[rare_df["incorrect_count"] > 0].copy()
+
+    sort_columns = [column_name for column_name in ["f1", "incorrect_count", "top1_accuracy", "support", "token"] if column_name in rare_df.columns]
+    ascending = []
+    for column_name in sort_columns:
+        if column_name in {"f1", "top1_accuracy", "support", "token"}:
+            ascending.append(True)
+        else:
+            ascending.append(False)
+
+    if sort_columns:
+        rare_df = rare_df.sort_values(sort_columns, ascending=ascending).reset_index(drop=True)
+
+    spotlight_columns = [
+        "token",
+        "support",
+        "f1",
+        "top1_accuracy",
+        "correct_count",
+        "incorrect_count",
+    ]
+    available_columns = [column_name for column_name in spotlight_columns if column_name in rare_df.columns]
+    return rare_df[available_columns]
+
+
 def _safe_corr(x_values, y_values):
     """Return a simple Pearson correlation or NaN when it cannot be computed."""
     x_values = np.asarray(x_values, dtype=float)
