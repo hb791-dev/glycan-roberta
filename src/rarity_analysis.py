@@ -1,0 +1,239 @@
+"""Helpers for looking at rare-token behavior after notebook 6 runs.
+
+This module keeps the post-processing pieces out of the notebook so the
+notebook can stay focused on setup, interpretation, and quick displays.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+
+def load_rarity_inputs(
+    test_summary_path: str | Path,
+    per_class_metrics_path: str | Path,
+    top1_roc_per_class_path: str | Path,
+    top1_pr_per_class_path: str | Path,
+):
+    """Load the saved notebook-6 artifacts needed for rarity analysis."""
+    test_summary_path = Path(test_summary_path)
+    per_class_metrics_path = Path(per_class_metrics_path)
+    top1_roc_per_class_path = Path(top1_roc_per_class_path)
+    top1_pr_per_class_path = Path(top1_pr_per_class_path)
+
+    test_summary = json.loads(test_summary_path.read_text())
+    per_class_metrics = pd.read_csv(per_class_metrics_path)
+    top1_roc_per_class = pd.read_csv(top1_roc_per_class_path)
+    top1_pr_per_class = pd.read_csv(top1_pr_per_class_path)
+
+    return {
+        "test_summary": test_summary,
+        "per_class_metrics": per_class_metrics,
+        "top1_roc_per_class": top1_roc_per_class,
+        "top1_pr_per_class": top1_pr_per_class,
+    }
+
+
+def merge_rarity_tables(per_class_metrics, top1_roc_per_class, top1_pr_per_class):
+    """Merge the saved class-level tables into one notebook-friendly frame."""
+    merged = per_class_metrics.merge(
+        top1_roc_per_class[["token_id", "token", "support", "top1_accuracy", "auc"]],
+        on=["token_id", "token", "support"],
+        how="left",
+    )
+    merged = merged.merge(
+        top1_pr_per_class[["token_id", "token", "support", "average_precision"]],
+        on=["token_id", "token", "support"],
+        how="left",
+    )
+    return merged.sort_values(["support", "token"], ascending=[False, True]).reset_index(drop=True)
+
+
+def assign_support_bins(merged_df, support_bins):
+    """Attach readable support-bin labels to the merged class table."""
+    df = merged_df.copy()
+
+    def _label_for_support(support):
+        support = int(support)
+        for lower, upper in support_bins:
+            if upper is None and support >= lower:
+                return f"{lower}+"
+            if lower <= support <= upper:
+                return f"{lower}-{upper}"
+        return "outside_bins"
+
+    df["support_bin"] = df["support"].map(_label_for_support)
+    return df
+
+
+def add_rarity_flags(merged_df, rare_support_max=24):
+    """Mark whether each token falls into the headline rare-token cutoff."""
+    df = merged_df.copy()
+    df["is_rare"] = df["support"] <= int(rare_support_max)
+    return df
+
+
+def build_rarity_bin_summary(merged_df):
+    """Summarize support, F1, AP, and AUC within each support bin."""
+    grouped = (
+        merged_df.groupby("support_bin", dropna=False)
+        .agg(
+            num_token_classes=("token", "count"),
+            total_support=("support", "sum"),
+            mean_support=("support", "mean"),
+            median_support=("support", "median"),
+            mean_f1=("f1", "mean"),
+            median_f1=("f1", "median"),
+            mean_top1_accuracy=("top1_accuracy", "mean"),
+            mean_average_precision=("average_precision", "mean"),
+            mean_auc=("auc", "mean"),
+        )
+        .reset_index()
+    )
+    return grouped
+
+
+def build_rare_token_table(merged_df, rare_support_max=24):
+    """Return the rare-token rows sorted from smallest support upward."""
+    rare_df = merged_df.loc[merged_df["support"] <= int(rare_support_max)].copy()
+    return rare_df.sort_values(["support", "f1", "token"], ascending=[True, True, True]).reset_index(drop=True)
+
+
+def _safe_log10_support(series):
+    """Use log support for scatter plots without blowing up on tiny counts."""
+    return np.log10(np.clip(series.astype(float), a_min=1.0, a_max=None))
+
+
+def _safe_corr(x_values, y_values):
+    """Return a simple Pearson correlation or NaN when it cannot be computed."""
+    x_values = np.asarray(x_values, dtype=float)
+    y_values = np.asarray(y_values, dtype=float)
+    if len(x_values) < 2:
+        return float("nan")
+    if np.allclose(x_values, x_values[0]) or np.allclose(y_values, y_values[0]):
+        return float("nan")
+    return float(np.corrcoef(x_values, y_values)[0, 1])
+
+
+def compute_rarity_summary(merged_df, test_summary, rare_support_max=24):
+    """Build one compact summary dictionary for the notebook and saved JSON."""
+    rare_df = merged_df.loc[merged_df["support"] <= int(rare_support_max)]
+    common_df = merged_df.loc[merged_df["support"] >= 100]
+    log_support = _safe_log10_support(merged_df["support"])
+
+    summary = {
+        "num_token_classes": int(len(merged_df)),
+        "num_classes_support_lt10": int((merged_df["support"] < 10).sum()),
+        "num_classes_support_lt25": int((merged_df["support"] < 25).sum()),
+        "median_support": float(merged_df["support"].median()),
+        "min_support": int(merged_df["support"].min()),
+        "max_support": int(merged_df["support"].max()),
+        "mean_f1_support_lt25": float(rare_df["f1"].mean()) if not rare_df.empty else float("nan"),
+        "mean_f1_support_ge100": float(common_df["f1"].mean()) if not common_df.empty else float("nan"),
+        "corr_log_support_f1": _safe_corr(log_support, merged_df["f1"]),
+        "corr_log_support_average_precision": _safe_corr(log_support, merged_df["average_precision"]),
+        "corr_log_support_auc": _safe_corr(log_support, merged_df["auc"]),
+        "macro_precision": float(test_summary["macro_precision"]),
+        "macro_recall": float(test_summary["macro_recall"]),
+        "macro_f1": float(test_summary["macro_f1"]),
+        "weighted_precision": float(test_summary["weighted_precision"]),
+        "weighted_recall": float(test_summary["weighted_recall"]),
+        "weighted_f1": float(test_summary["weighted_f1"]),
+        "macro_weighted_f1_gap": float(test_summary["weighted_f1"] - test_summary["macro_f1"]),
+    }
+    return summary
+
+
+def plot_support_distribution(merged_df, output_path):
+    """Plot how many token classes land at each support level."""
+    output_path = Path(output_path)
+    plt.figure(figsize=(8, 5))
+    plt.hist(merged_df["support"], bins=20, color="#4C72B0", edgecolor="white")
+    plt.xlabel("Support in masked test set")
+    plt.ylabel("Number of token classes")
+    plt.title("Token-class support distribution")
+    plt.grid(alpha=0.2)
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+
+def plot_support_metric_scatter(merged_df, metric_col, output_path):
+    """Plot one metric against log support so the support trend is easier to see."""
+    output_path = Path(output_path)
+    metric_labels = {
+        "f1": "F1",
+        "average_precision": "Average precision",
+        "auc": "ROC AUC",
+    }
+    df = merged_df.copy()
+    df["log10_support"] = _safe_log10_support(df["support"])
+
+    plt.figure(figsize=(8, 5))
+    plt.scatter(df["log10_support"], df[metric_col], alpha=0.7, color="#DD8452")
+    plt.xlabel("log10(support)")
+    plt.ylabel(metric_labels.get(metric_col, metric_col))
+    plt.title(f"{metric_labels.get(metric_col, metric_col)} vs support")
+    plt.grid(alpha=0.2)
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+
+def plot_metric_by_support_bin(bin_summary_df, metric_col, output_path):
+    """Plot one averaged metric across the readable support bins."""
+    output_path = Path(output_path)
+    metric_labels = {
+        "mean_f1": "Mean F1",
+        "mean_average_precision": "Mean average precision",
+        "mean_auc": "Mean ROC AUC",
+    }
+
+    plt.figure(figsize=(8, 5))
+    plt.bar(bin_summary_df["support_bin"], bin_summary_df[metric_col], color="#55A868")
+    plt.xlabel("Support bin")
+    plt.ylabel(metric_labels.get(metric_col, metric_col))
+    plt.title(f"{metric_labels.get(metric_col, metric_col)} by support bin")
+    plt.ylim(0.0, 1.05)
+    plt.grid(axis="y", alpha=0.2)
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+
+def save_rarity_outputs(
+    output_dir,
+    merged_df,
+    bin_summary_df,
+    rare_token_df,
+    rarity_summary,
+    rarity_config,
+):
+    """Write the main rarity outputs and return the saved file paths."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    merged_metrics_path = output_dir / "merged_rarity_metrics.csv"
+    rarity_bin_summary_path = output_dir / "rarity_bin_summary.csv"
+    rare_token_table_path = output_dir / "rare_token_table.csv"
+    rarity_summary_path = output_dir / "rarity_summary.json"
+    rarity_config_path = output_dir / "rarity_config.json"
+
+    merged_df.to_csv(merged_metrics_path, index=False)
+    bin_summary_df.to_csv(rarity_bin_summary_path, index=False)
+    rare_token_df.to_csv(rare_token_table_path, index=False)
+    rarity_summary_path.write_text(json.dumps(rarity_summary, indent=2))
+    rarity_config_path.write_text(json.dumps(rarity_config, indent=2))
+
+    return {
+        "merged_metrics_path": merged_metrics_path,
+        "rarity_bin_summary_path": rarity_bin_summary_path,
+        "rare_token_table_path": rare_token_table_path,
+        "rarity_summary_path": rarity_summary_path,
+        "rarity_config_path": rarity_config_path,
+    }
