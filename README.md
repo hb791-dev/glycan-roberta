@@ -255,8 +255,8 @@ Purpose:
 - define small manual anchor-and-variant review sets directly in the notebook
 - score anchor-to-variant cosine similarity and rank variants within each set
 - inspect tokenization alongside similarity results
-- summarize similarity distributions with histograms
-- make relative ordering explicit with ranked tables and ordering plots
+- summarize similarity distributions with histograms across all 9 variants in each anchor group
+- make the overall within-anchor order explicit with a single 1-to-9 rank
 - build HTML reports with glycan cartoons for anchors and variants
 
 Main outputs:
@@ -264,11 +264,9 @@ Main outputs:
 - `variant_tokenization_preview.csv`
 - `variant_cartoon_manifest.csv`
 - `variant_distribution_summary.csv`
-- `variant_ordering_summary.csv`
 - `variant_similarity_config.json`
 - `anchor_matrices/`
 - `histograms/`
-- `ordering_plots/`
 - `html/index.html`
 - `html/<anchor_id>_variant_similarity.html`
 
@@ -283,8 +281,8 @@ Notes:
   notebook
 - the notebook is currently set up for manual review sets, not exhaustive
   whole-test-set similarity sweeps
-- the current notebook emphasizes histograms and relative ordering rather than
-  heatmap-style visualization
+- the current notebook emphasizes all-variant histograms and one overall 1-to-9
+  anchor ranking rather than heatmap-style visualization
 
 ## Tokenizer Settings In This Workflow
 

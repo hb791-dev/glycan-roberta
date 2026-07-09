@@ -309,9 +309,9 @@ def _sort_variant_results(df: "pd.DataFrame") -> "pd.DataFrame":
     sortable = sortable.sort_values(
         [
             "anchor_id",
+            "rank_within_anchor",
             "_variant_set_order",
             "_variant_set_name",
-            "rank_within_set",
             "variant_id",
         ],
         kind="stable",
@@ -441,12 +441,6 @@ def compare_anchor_variants(
         .rank(method="dense", ascending=False)
         .astype(int)
     )
-    # Keep a second rank within each edit family so "linkage only" comparisons stay easy.
-    variant_results_df["rank_within_set"] = (
-        variant_results_df.groupby(["anchor_id", "variant_set"])["cosine_similarity"]
-        .rank(method="dense", ascending=False)
-        .astype(int)
-    )
     return _sort_variant_results(variant_results_df)
 
 
@@ -530,83 +524,38 @@ def plot_variant_similarity_histogram(variant_rows_df, output_path, title: str) 
     return output_path
 
 
-def plot_anchor_variant_ordering(anchor_rows_df, output_path, title: str) -> Path:
-    """Save one ordered bar chart showing relative similarity within an anchor."""
-    import matplotlib.pyplot as plt
-
-    output_path = Path(output_path)
-    sorted_rows = anchor_rows_df.sort_values(
-        ["rank_within_anchor", "rank_within_set", "variant_id"],
-        kind="stable",
-    )
-    labels = [
-        f"{int(row.rank_within_anchor)}. {row.variant_id} ({row.variant_set})"
-        for row in sorted_rows.itertuples(index=False)
-    ]
-    values = sorted_rows["cosine_similarity"].tolist()
-    color_map = {
-        "linkage": "#4c78a8",
-        "monosaccharide": "#59a14f",
-        "branch_terminal": "#f28e2b",
-    }
-    # Reuse the same colors across anchors so the edit families are visually consistent.
-    colors = [color_map.get(_normalize_variant_set_name(value), "#888888") for value in sorted_rows["variant_set"]]
-
-    fig_height = max(4.5, 0.55 * len(labels))
-    fig, ax = plt.subplots(figsize=(9, fig_height))
-    bars = ax.barh(labels, values, color=colors)
-    ax.invert_yaxis()
-    ax.set_xlim(-1.0, 1.0)
-    ax.set_xlabel("Cosine similarity")
-    ax.set_title(title)
-
-    for bar, value in zip(bars, values):
-        y_position = bar.get_y() + bar.get_height() / 2
-        ax.text(
-            value + (0.02 if value >= 0 else -0.02),
-            y_position,
-            f"{value:.3f}",
-            va="center",
-            ha="left" if value >= 0 else "right",
-            fontsize=9,
-        )
-
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=200)
-    plt.close(fig)
-    return output_path
-
-
-def build_variant_summary_tables(variant_results_df) -> tuple["pd.DataFrame", "pd.DataFrame"]:
-    """Return lightweight summary tables for distribution and ordering checks."""
+def build_variant_summary_tables(variant_results_df) -> "pd.DataFrame":
+    """Return one summary table with per-set and all-variant anchor summaries."""
     import pandas as pd
 
     # One compact table for "how spread out are the scores?" within each anchor/set.
-    distribution_summary_df = (
+    set_summary_df = (
         variant_results_df.groupby(["anchor_id", "variant_set"], sort=False)["cosine_similarity"]
         .agg(["count", "mean", "median", "min", "max", "std"])
         .reset_index()
         .rename(columns={"std": "std_dev"})
     )
-    distribution_summary_df["std_dev"] = distribution_summary_df["std_dev"].fillna(0.0)
+    set_summary_df["std_dev"] = set_summary_df["std_dev"].fillna(0.0)
 
-    # A second table keeps the full ranking order explicit for writeups and sanity checks.
-    ordering_summary_df = _sort_variant_results(
-        variant_results_df[
-            [
-                "anchor_id",
-                "variant_set",
-                "variant_id",
-                "edit_type",
-                "edit_description",
-                "cosine_similarity",
-                "rank_within_anchor",
-                "rank_within_set",
-                "variant_sequence",
-            ]
-        ]
+    # Add one anchor-level rollup so each anchor also has a single summary across all 9 variants.
+    overall_summary_df = (
+        variant_results_df.groupby("anchor_id", sort=False)["cosine_similarity"]
+        .agg(["count", "mean", "median", "min", "max", "std"])
+        .reset_index()
+        .rename(columns={"std": "std_dev"})
     )
-    return distribution_summary_df, ordering_summary_df
+    overall_summary_df["std_dev"] = overall_summary_df["std_dev"].fillna(0.0)
+    overall_summary_df.insert(1, "variant_set", "all_variants")
+
+    distribution_summary_df = pd.concat([overall_summary_df, set_summary_df], ignore_index=True)
+    distribution_summary_df["_variant_set_order"] = distribution_summary_df["variant_set"].map(
+        lambda value: -1 if str(value) == "all_variants" else _variant_set_sort_key(str(value))[0]
+    )
+    distribution_summary_df = distribution_summary_df.sort_values(
+        ["anchor_id", "_variant_set_order", "variant_set"],
+        kind="stable",
+    ).drop(columns=["_variant_set_order"]).reset_index(drop=True)
+    return distribution_summary_df
 
 
 def _variant_set_heading(variant_set: str) -> str:
@@ -638,30 +587,18 @@ def render_anchor_similarity_html(
     output_path,
     output_name: str,
     histogram_image_path: str | None = None,
-    ordering_image_path: str | None = None,
 ) -> Path:
     """Render one anchor-focused HTML page."""
     anchor_sequence = str(anchor_rows_df["anchor_sequence"].iloc[0])
     anchor_cartoon = cartoon_lookup.get(anchor_sequence)
-    overall_order_rows = anchor_rows_df.sort_values(
-        ["rank_within_anchor", "rank_within_set", "variant_id"],
-        kind="stable",
-    )
     analysis_media_html = ""
-    if histogram_image_path or ordering_image_path:
+    if histogram_image_path:
         image_sections = []
         if histogram_image_path:
             image_sections.append(
                 "<div class='analysis-card'>"
-                "<h3>Similarity Distribution</h3>"
+                "<h3>Similarity Distribution Across All 9 Variants</h3>"
                 f"<img src='{escape(histogram_image_path, quote=True)}' alt='Histogram for {escape(anchor_id)}'>"
-                "</div>"
-            )
-        if ordering_image_path:
-            image_sections.append(
-                "<div class='analysis-card'>"
-                "<h3>Relative Ordering</h3>"
-                f"<img src='{escape(ordering_image_path, quote=True)}' alt='Ordered ranking for {escape(anchor_id)}'>"
                 "</div>"
             )
         analysis_media_html = (
@@ -670,40 +607,12 @@ def render_anchor_similarity_html(
             + "</div>"
         )
 
-    overall_order_row_html = []
-    for row in overall_order_rows.itertuples(index=False):
-        overall_order_row_html.append(
-            "<tr>"
-            f"<td><span class='rank-chip'>{int(row.rank_within_anchor)}</span></td>"
-            f"<td>{escape(str(row.variant_id))}</td>"
-            f"<td>{escape(_humanize_label(str(row.variant_set)))}</td>"
-            f"<td>{row.cosine_similarity:.3f}</td>"
-            f"<td>{escape(str(row.edit_description))}</td>"
-            "</tr>"
-        )
-    overall_order_html = (
-        "<div class='ordering-summary'>"
-        "<h2>Overall Anchor Ordering (1-9)</h2>"
-        "<p>This is the full within-anchor ranking across every variant, regardless of edit family.</p>"
-        "<table>"
-        "<thead><tr>"
-        "<th>Overall Rank</th>"
-        "<th>Variant ID</th>"
-        "<th>Edit Family</th>"
-        "<th>Cosine Similarity</th>"
-        "<th>Edit Description</th>"
-        "</tr></thead>"
-        f"<tbody>{''.join(overall_order_row_html)}</tbody>"
-        "</table>"
-        "</div>"
-    )
-
     section_html_parts = []
     grouped = anchor_rows_df.groupby("variant_set", sort=False)
     for variant_set, set_df in grouped:
         row_html_parts = []
         sorted_rows = set_df.sort_values(
-            ["rank_within_set", "rank_within_anchor", "variant_id"],
+            ["rank_within_anchor", "variant_id"],
             kind="stable",
         )
         for row in sorted_rows.itertuples(index=False):
@@ -715,13 +624,13 @@ def render_anchor_similarity_html(
                 f"<td>{escape(_humanize_label(str(row.edit_type)))}</td>"
                 f"<td>{escape(str(row.edit_description))}</td>"
                 f"<td>{row.cosine_similarity:.3f}</td>"
-                f"<td>{int(row.rank_within_set)}</td>"
                 f"<td>{format_glycan_sequence_block(str(row.variant_sequence), variant_cartoon)}</td>"
                 "</tr>"
             )
 
         section_html_parts.append(
             f"<h2>{escape(_variant_set_heading(variant_set))}</h2>"
+            "<p class='section-note'>Overall rank runs from 1 = most similar to 9 = least similar across all variants for this anchor.</p>"
             "<table>"
             "<thead><tr>"
             "<th>Variant ID</th>"
@@ -729,7 +638,6 @@ def render_anchor_similarity_html(
             "<th>Edit Type</th>"
             "<th>Edit Description</th>"
             "<th>Cosine Similarity</th>"
-            "<th>Set Rank</th>"
             "<th>Variant</th>"
             "</tr></thead>"
             f"<tbody>{''.join(row_html_parts)}</tbody>"
@@ -772,13 +680,6 @@ def render_anchor_similarity_html(
       border-radius: 12px;
       padding: 16px;
     }}
-    .ordering-summary {{
-      background: #fafafa;
-      border: 1px solid #ddd;
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 28px;
-    }}
     .analysis-card img {{
       width: 100%;
       height: auto;
@@ -798,6 +699,10 @@ def render_anchor_similarity_html(
     }}
     th {{
       background: #f0f0f0;
+    }}
+    .section-note {{
+      margin: 0 0 12px;
+      color: #555;
     }}
     .rank-chip {{
       display: inline-block;
@@ -851,7 +756,6 @@ def render_anchor_similarity_html(
     <p><strong>Variants in this group:</strong> {len(anchor_rows_df)}</p>
   </div>
   {analysis_media_html}
-  {overall_order_html}
   {''.join(section_html_parts)}
 </body>
 </html>
@@ -1039,7 +943,6 @@ def save_variant_similarity_outputs(
     cartoon_manifest_df,
     anchor_matrices: dict[str, "pd.DataFrame"],
     distribution_summary_df,
-    ordering_summary_df,
     output_dir,
     output_name: str,
     config_payload: dict,
@@ -1052,22 +955,18 @@ def save_variant_similarity_outputs(
     tokenization_preview_path = output_path / "variant_tokenization_preview.csv"
     cartoon_manifest_path = output_path / "variant_cartoon_manifest.csv"
     distribution_summary_path = output_path / "variant_distribution_summary.csv"
-    ordering_summary_path = output_path / "variant_ordering_summary.csv"
     config_path = output_path / "variant_similarity_config.json"
     html_dir = output_path / "html"
     matrix_dir = output_path / "anchor_matrices"
     histogram_dir = output_path / "histograms"
-    ordering_plot_dir = output_path / "ordering_plots"
     html_dir.mkdir(parents=True, exist_ok=True)
     matrix_dir.mkdir(parents=True, exist_ok=True)
     histogram_dir.mkdir(parents=True, exist_ok=True)
-    ordering_plot_dir.mkdir(parents=True, exist_ok=True)
 
     variant_results_df.to_csv(variant_results_path, index=False)
     tokenization_preview_df.to_csv(tokenization_preview_path, index=False)
     cartoon_manifest_df.to_csv(cartoon_manifest_path, index=False)
     distribution_summary_df.to_csv(distribution_summary_path, index=False)
-    ordering_summary_df.to_csv(ordering_summary_path, index=False)
 
     anchor_matrix_paths: dict[str, Path] = {}
     for anchor_id, matrix_df in anchor_matrices.items():
@@ -1089,21 +988,14 @@ def save_variant_similarity_outputs(
 
     anchor_html_paths: dict[str, Path] = {}
     anchor_histogram_paths: dict[str, Path] = {}
-    anchor_ordering_plot_paths: dict[str, Path] = {}
     for anchor_id, anchor_df in variant_results_df.groupby("anchor_id", sort=False):
-        # Each anchor gets its own distribution plot plus a direct ranked view.
+        # Each anchor gets one histogram across all 9 variants in that anchor group.
         anchor_histogram_paths[anchor_id] = plot_variant_similarity_histogram(
             anchor_df,
             histogram_dir / f"{anchor_id}_similarity_histogram.png",
-            f"{output_name} {anchor_id} similarity distribution",
-        )
-        anchor_ordering_plot_paths[anchor_id] = plot_anchor_variant_ordering(
-            anchor_df,
-            ordering_plot_dir / f"{anchor_id}_relative_ordering.png",
-            f"{output_name} {anchor_id} relative ordering",
+            f"{output_name} {anchor_id} all-variant similarity distribution",
         )
         anchor_histogram_data_uri = _image_path_to_data_uri(anchor_histogram_paths[anchor_id])
-        anchor_ordering_data_uri = _image_path_to_data_uri(anchor_ordering_plot_paths[anchor_id])
         anchor_html_paths[anchor_id] = render_anchor_similarity_html(
             anchor_id=str(anchor_id),
             anchor_rows_df=anchor_df,
@@ -1111,7 +1003,6 @@ def save_variant_similarity_outputs(
             output_path=html_dir / f"{anchor_id}_variant_similarity.html",
             output_name=output_name,
             histogram_image_path=anchor_histogram_data_uri,
-            ordering_image_path=anchor_ordering_data_uri,
         )
 
     index_html_path = render_variant_index_html(
@@ -1128,16 +1019,13 @@ def save_variant_similarity_outputs(
         "tokenization_preview_path": tokenization_preview_path,
         "cartoon_manifest_path": cartoon_manifest_path,
         "distribution_summary_path": distribution_summary_path,
-        "ordering_summary_path": ordering_summary_path,
         "config_path": config_path,
         "html_dir": html_dir,
         "histogram_dir": histogram_dir,
-        "ordering_plot_dir": ordering_plot_dir,
         "overall_histogram_path": overall_histogram_path,
         "index_html_path": index_html_path,
         "anchor_html_paths": anchor_html_paths,
         "anchor_histogram_paths": anchor_histogram_paths,
-        "anchor_ordering_plot_paths": anchor_ordering_plot_paths,
         "anchor_matrix_paths": anchor_matrix_paths,
     }
 
@@ -1235,8 +1123,8 @@ def run_variant_similarity_analysis(
         display=cartoon_display,
         lookup_timeout=lookup_timeout,
     )
-    # These two tables are the main "interpretation-ready" outputs for the notebook.
-    distribution_summary_df, ordering_summary_df = build_variant_summary_tables(variant_results_df)
+    # This summary table combines per-set stats with one "all 9 variants" row per anchor.
+    distribution_summary_df = build_variant_summary_tables(variant_results_df)
     anchor_matrices = build_anchor_similarity_matrices(
         variant_records=variant_records,
         tokenizer=tokenizer,
@@ -1264,7 +1152,6 @@ def run_variant_similarity_analysis(
         cartoon_manifest_df=cartoon_manifest_df,
         anchor_matrices=anchor_matrices,
         distribution_summary_df=distribution_summary_df,
-        ordering_summary_df=ordering_summary_df,
         output_dir=output_dir,
         output_name=output_name,
         config_payload=config_payload,
@@ -1275,7 +1162,6 @@ def run_variant_similarity_analysis(
         "tokenization_preview_df": tokenization_preview_df,
         "cartoon_manifest_df": cartoon_manifest_df,
         "distribution_summary_df": distribution_summary_df,
-        "ordering_summary_df": ordering_summary_df,
         "anchor_matrices": anchor_matrices,
         "preview_sequences": preview_sequences,
         "saved_paths": saved_paths,
