@@ -436,11 +436,27 @@ def compare_anchor_variants(
         )
 
     variant_results_df = pd.DataFrame(comparison_rows)
-    variant_results_df["rank_within_anchor"] = (
-        variant_results_df.groupby("anchor_id")["cosine_similarity"]
-        .rank(method="dense", ascending=False)
-        .astype(int)
+    variant_results_df["_variant_set_order"] = variant_results_df["variant_set"].map(
+        lambda value: _variant_set_sort_key(value)[0]
     )
+    variant_results_df["_variant_set_name"] = variant_results_df["variant_set"].map(
+        lambda value: _variant_set_sort_key(value)[1]
+    )
+    # Force one explicit 1-9 ordering per anchor by sorting on similarity first and
+    # then using stable tie-breakers when similarities are extremely close or equal.
+    variant_results_df = variant_results_df.sort_values(
+        [
+            "anchor_id",
+            "cosine_similarity",
+            "_variant_set_order",
+            "_variant_set_name",
+            "variant_id",
+        ],
+        ascending=[True, False, True, True, True],
+        kind="stable",
+    )
+    variant_results_df["rank_within_anchor"] = variant_results_df.groupby("anchor_id").cumcount() + 1
+    variant_results_df = variant_results_df.drop(columns=["_variant_set_order", "_variant_set_name"])
     return _sort_variant_results(variant_results_df)
 
 
