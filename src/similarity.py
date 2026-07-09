@@ -6,6 +6,7 @@ can focus on configuration, interpretation, and display.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Sequence
 from html import escape
 import json
@@ -539,7 +540,7 @@ def plot_anchor_variant_ordering(anchor_rows_df, output_path, title: str) -> Pat
         kind="stable",
     )
     labels = [
-        f"{row.variant_id} ({row.variant_set})"
+        f"{int(row.rank_within_anchor)}. {row.variant_id} ({row.variant_set})"
         for row in sorted_rows.itertuples(index=False)
     ]
     values = sorted_rows["cosine_similarity"].tolist()
@@ -612,6 +613,24 @@ def _variant_set_heading(variant_set: str) -> str:
     return str(variant_set).replace("_", " ").replace("-", " ").title()
 
 
+def _humanize_label(label: str) -> str:
+    return str(label).replace("_", " ").replace("-", " ").title()
+
+
+def _image_path_to_data_uri(image_path) -> str:
+    """Return one local image file as a base64 data URI for standalone HTML."""
+    image_path = Path(image_path)
+    suffix = image_path.suffix.lower()
+    mime_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml",
+    }.get(suffix, "application/octet-stream")
+    encoded_bytes = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded_bytes}"
+
+
 def render_anchor_similarity_html(
     anchor_id: str,
     anchor_rows_df,
@@ -624,6 +643,10 @@ def render_anchor_similarity_html(
     """Render one anchor-focused HTML page."""
     anchor_sequence = str(anchor_rows_df["anchor_sequence"].iloc[0])
     anchor_cartoon = cartoon_lookup.get(anchor_sequence)
+    overall_order_rows = anchor_rows_df.sort_values(
+        ["rank_within_anchor", "rank_within_set", "variant_id"],
+        kind="stable",
+    )
     analysis_media_html = ""
     if histogram_image_path or ordering_image_path:
         image_sections = []
@@ -647,6 +670,34 @@ def render_anchor_similarity_html(
             + "</div>"
         )
 
+    overall_order_row_html = []
+    for row in overall_order_rows.itertuples(index=False):
+        overall_order_row_html.append(
+            "<tr>"
+            f"<td><span class='rank-chip'>{int(row.rank_within_anchor)}</span></td>"
+            f"<td>{escape(str(row.variant_id))}</td>"
+            f"<td>{escape(_humanize_label(str(row.variant_set)))}</td>"
+            f"<td>{row.cosine_similarity:.3f}</td>"
+            f"<td>{escape(str(row.edit_description))}</td>"
+            "</tr>"
+        )
+    overall_order_html = (
+        "<div class='ordering-summary'>"
+        "<h2>Overall Anchor Ordering (1-9)</h2>"
+        "<p>This is the full within-anchor ranking across every variant, regardless of edit family.</p>"
+        "<table>"
+        "<thead><tr>"
+        "<th>Overall Rank</th>"
+        "<th>Variant ID</th>"
+        "<th>Edit Family</th>"
+        "<th>Cosine Similarity</th>"
+        "<th>Edit Description</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(overall_order_row_html)}</tbody>"
+        "</table>"
+        "</div>"
+    )
+
     section_html_parts = []
     grouped = anchor_rows_df.groupby("variant_set", sort=False)
     for variant_set, set_df in grouped:
@@ -660,10 +711,10 @@ def render_anchor_similarity_html(
             row_html_parts.append(
                 "<tr>"
                 f"<td>{escape(str(row.variant_id))}</td>"
-                f"<td>{escape(str(row.edit_type))}</td>"
+                f"<td><span class='rank-chip'>{int(row.rank_within_anchor)}</span></td>"
+                f"<td>{escape(_humanize_label(str(row.edit_type)))}</td>"
                 f"<td>{escape(str(row.edit_description))}</td>"
                 f"<td>{row.cosine_similarity:.3f}</td>"
-                f"<td>{int(row.rank_within_anchor)}</td>"
                 f"<td>{int(row.rank_within_set)}</td>"
                 f"<td>{format_glycan_sequence_block(str(row.variant_sequence), variant_cartoon)}</td>"
                 "</tr>"
@@ -674,11 +725,11 @@ def render_anchor_similarity_html(
             "<table>"
             "<thead><tr>"
             "<th>Variant ID</th>"
+            "<th>Overall Rank</th>"
             "<th>Edit Type</th>"
             "<th>Edit Description</th>"
             "<th>Cosine Similarity</th>"
-            "<th>Rank Within Anchor</th>"
-            "<th>Rank Within Set</th>"
+            "<th>Set Rank</th>"
             "<th>Variant</th>"
             "</tr></thead>"
             f"<tbody>{''.join(row_html_parts)}</tbody>"
@@ -721,6 +772,13 @@ def render_anchor_similarity_html(
       border-radius: 12px;
       padding: 16px;
     }}
+    .ordering-summary {{
+      background: #fafafa;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 28px;
+    }}
     .analysis-card img {{
       width: 100%;
       height: auto;
@@ -740,6 +798,16 @@ def render_anchor_similarity_html(
     }}
     th {{
       background: #f0f0f0;
+    }}
+    .rank-chip {{
+      display: inline-block;
+      min-width: 28px;
+      text-align: center;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 4px 8px;
+      background: #1f2937;
+      color: white;
     }}
     .sequence-block {{
       display: flex;
@@ -783,6 +851,7 @@ def render_anchor_similarity_html(
     <p><strong>Variants in this group:</strong> {len(anchor_rows_df)}</p>
   </div>
   {analysis_media_html}
+  {overall_order_html}
   {''.join(section_html_parts)}
 </body>
 </html>
@@ -1016,6 +1085,7 @@ def save_variant_similarity_outputs(
         histogram_dir / "all_variants_similarity_histogram.png",
         f"{output_name} all-variant similarity distribution",
     )
+    overall_histogram_data_uri = _image_path_to_data_uri(overall_histogram_path)
 
     anchor_html_paths: dict[str, Path] = {}
     anchor_histogram_paths: dict[str, Path] = {}
@@ -1032,15 +1102,16 @@ def save_variant_similarity_outputs(
             ordering_plot_dir / f"{anchor_id}_relative_ordering.png",
             f"{output_name} {anchor_id} relative ordering",
         )
+        anchor_histogram_data_uri = _image_path_to_data_uri(anchor_histogram_paths[anchor_id])
+        anchor_ordering_data_uri = _image_path_to_data_uri(anchor_ordering_plot_paths[anchor_id])
         anchor_html_paths[anchor_id] = render_anchor_similarity_html(
             anchor_id=str(anchor_id),
             anchor_rows_df=anchor_df,
             cartoon_lookup=cartoon_lookup,
             output_path=html_dir / f"{anchor_id}_variant_similarity.html",
             output_name=output_name,
-            # Use relative paths so the whole folder can be opened locally in a browser.
-            histogram_image_path=f"../histograms/{anchor_histogram_paths[anchor_id].name}",
-            ordering_image_path=f"../ordering_plots/{anchor_ordering_plot_paths[anchor_id].name}",
+            histogram_image_path=anchor_histogram_data_uri,
+            ordering_image_path=anchor_ordering_data_uri,
         )
 
     index_html_path = render_variant_index_html(
@@ -1049,7 +1120,7 @@ def save_variant_similarity_outputs(
         anchor_html_paths=anchor_html_paths,
         output_path=html_dir / "index.html",
         output_name=output_name,
-        overall_histogram_path=f"../histograms/{overall_histogram_path.name}",
+        overall_histogram_path=overall_histogram_data_uri,
     )
 
     return {
