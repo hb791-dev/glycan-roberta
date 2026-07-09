@@ -57,12 +57,9 @@ glycan-roberta/
 │   ├── 04_roberta_pretraining.ipynb
 │   ├── 05_validation_diagnostics.ipynb
 │   ├── 06_test_set_evaluation.ipynb
-│   ├── 06b_rarity_analysis.ipynb
 │   └── 07_similarity_analysis.ipynb
 ├── src/
-│   ├── data_utils.py
-│   ├── rarity_analysis.py
-│   ├── run_index.py
+│   ├── glycan_cartoons.py
 │   ├── similarity.py
 │   ├── test_evaluation.py
 │   ├── tokenizer_utils.py
@@ -104,7 +101,6 @@ MyDrive/ProjectRoot/
 │   ├── exploration/
 │   ├── validation/
 │   ├── test_evaluation/
-│   ├── rarity/
 │   └── similarity/
 └── registry/
     └── run_index.csv
@@ -153,40 +149,24 @@ Purpose:
 - train the GlyBERTa-style WordLevel tokenizer on the training split
 - adapt the GlyBERTa glyco-letter idea to this project's compact glycan format
 - isolate inline linkage text and branch markers before learning the vocabulary
-- run an OOV audit on the train, validation, and test splits using the
-  GlyBERTa split rule
 
 Main outputs:
 - tokenizer files
 - vocab
 - inspection preview
 - tokenizer configuration summary
-
-Notes:
-- includes an `OOV audit` section that reports split-level coverage, top OOV
-  tokens, and example sequences with OOV tokens
-- the audit is an in-notebook check and does not save a separate artifact by
-  default
 
 ### `02c_manual_gen.ipynb`
 
 Purpose:
 - build the manual glycan tokenizer from the training split
 - save a fixed vocabulary and matching Hugging Face tokenizer
-- run an OOV audit on the train, validation, and test splits using the manual
-  parser split rule
 
 Main outputs:
 - tokenizer files
 - vocab
 - inspection preview
 - tokenizer configuration summary
-
-Notes:
-- includes an `OOV audit` section that reports split-level coverage, top OOV
-  tokens, and example sequences with OOV tokens
-- the audit is an in-notebook check and does not save a separate artifact by
-  default
 
 ### `02d_hybrid_char_bpe_gen.ipynb`
 
@@ -238,22 +218,11 @@ Notes:
 Purpose:
 - review training and validation loss after notebook 4
 - summarize best-epoch and final validation behavior for a run
-- decide whether a continuation run from `best_model` still looks worth trying
 
 Main outputs:
 - `loss_curves.png`
 - `loss_history.csv`
 - `validation_summary.json`
-
-Notes:
-- the continuation recommendation is meant to be a quick training check, not a
-  final model-quality judgment
-- in the current helper logic, continuation is only recommended when the best
-  validation epoch happened late in training and the most recent validation
-  window did not clearly get worse
-- if the best validation point happened much earlier, or the tail of the curve
-  is already drifting upward, notebook 5 will usually say continuation is
-  probably not necessary
 
 ### `06_test_set_evaluation.ipynb`
 
@@ -271,79 +240,51 @@ Main outputs:
 - `roc_auc_summary.csv`
 - `pr_curves.png`
 - `pr_auc_summary.csv`
-- `top1_correctness_roc_curves.png`
-- `top1_correctness_roc_summary.csv`
-- `top1_correctness_roc_per_class.csv`
-- `top1_correctness_pr_curves.png`
-- `top1_correctness_pr_summary.csv`
-- `top1_correctness_pr_per_class.csv`
 - `qualitative_probe_results.csv`
 
 Notes:
 - ROC and precision-recall plots use tokenizer-specific class selections
-- notebook 6 also saves all-token top-1 correctness ROC and PR outputs based
-  on whether the top-1 prediction was correct
 - qualitative probes are tokenizer-specific because token boundaries differ
   across tokenizers
-
-### `06b_rarity_analysis.ipynb`
-
-Purpose:
-- check whether the weaker macro scores are mostly a rare-token problem
-- group true token classes by test-set support and compare how performance
-  changes across support ranges
-- save a simple rarity summary that I can reuse later in slides or writeups
-
-Main outputs:
-- `merged_rarity_metrics.csv`
-- `rarity_bin_summary.csv`
-- `rare_token_table.csv`
-- `rarity_summary.json`
-- `support_distribution.png`
-- `support_vs_f1_scatter.png`
-- `support_vs_ap_scatter.png`
-- `support_vs_auc_scatter.png`
-- `metric_by_support_bin.png`
-
-Notes:
-- this notebook reads saved outputs from notebook 6 and does not rerun model
-  inference
-- the notebook merges the saved class-level outputs into one main rarity table
-  instead of showing several near-duplicate tables separately
-- the notebook display is intentionally lighter now: one quick input check, one
-  support-bin summary table, and one rare-token spotlight table
-- rarity is defined by per-class support in masked test-set `y_true`
-- the default support bins are meant to be easy to read, not mathematically
-  final
-- the support-distribution figure is a support-bin count view, and the scatter
-  plots use raw support values rather than `log10(support)`
-- the scatter plots also mark the rare-token cutoff directly so it is easier to
-  see where the low-support region starts
 
 ### `07_similarity_analysis.ipynb`
 
 Purpose:
 - compare glycan sequence embeddings from one saved model checkpoint at a time
 - choose one `best_model/` folder in Drive in a single `MODEL_DIR` cell
-- run manual example pairs plus an optional custom pair
-- inspect tokenization alongside cosine similarity results
-- view a similarity matrix and inline heatmap for the selected glycans
+- define small manual anchor-and-variant review sets directly in the notebook
+- score anchor-to-variant cosine similarity and rank variants within each set
+- inspect tokenization alongside similarity results
+- summarize similarity distributions with histograms
+- make relative ordering explicit with ranked tables and ordering plots
+- build HTML reports with glycan cartoons for anchors and variants
 
 Main outputs:
-- `similarity_pairs.csv`
-- `tokenization_preview.csv`
-- `similarity_matrix.csv`
-- `similarity_heatmap.png`
-- `similarity_config.json`
+- `variant_similarity_results.csv`
+- `variant_tokenization_preview.csv`
+- `variant_cartoon_manifest.csv`
+- `variant_distribution_summary.csv`
+- `variant_ordering_summary.csv`
+- `variant_similarity_config.json`
+- `anchor_matrices/`
+- `histograms/`
+- `ordering_plots/`
+- `html/index.html`
+- `html/<anchor_id>_variant_similarity.html`
 
 Notes:
 - the reusable embedding and similarity logic lives in `src/similarity.py`
+- glycan cartoon lookup and generic cartoon HTML helpers live in `src/glycan_cartoons.py`
 - the notebook saves outputs under `results/similarity/`
 - this notebook is not split-specific evaluation: it does not automatically load
   only the train, validation, or test set
 - the selected checkpoint may come from a run associated with a dataset split,
   but the similarity inputs are the user-defined glycans configured in the
   notebook
+- the notebook is currently set up for manual review sets, not exhaustive
+  whole-test-set similarity sweeps
+- the current notebook emphasizes histograms and relative ordering rather than
+  heatmap-style visualization
 
 ## Tokenizer Settings In This Workflow
 
@@ -383,9 +324,9 @@ names so runs can be compared later without overwriting older results.
 
 ## Architectures Run So Far
 
-For this section, the more reliable source is the actual Drive folder layout,
-not just the run registry. The registry is still useful, but it does not
-always reflect every checkpoint or later output folder cleanly.
+Based on the Drive-side run registry in
+`MyDrive/ProjectRoot/registry/run_index.csv`, this project has already been
+used to train more than one model architecture.
 
 Recorded architecture families:
 
@@ -396,50 +337,30 @@ Recorded architecture families:
 - `L8_H512_A8`:
   8 layers, hidden size 512, 8 attention heads, intermediate size 2048
 
-Architecture families observed from checkpoint directories currently present in
-`MyDrive/ProjectRoot/checkpoints/`:
+Architectures observed by tokenizer family:
 
 - `manual`:
-  checkpoint folders present for `L4_H384_A6` and `L6_H512_A8`, including one
-  continuation run from `L6_H512_A8`
+  runs recorded for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
 - `hybrid_char_bpe`:
-  checkpoint folders present for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
+  runs recorded for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
 - `byte_bpe`:
-  checkpoint folders present for `L6_H512_A8`, including one continuation run
+  runs recorded for `L6_H512_A8`
 - `glyberta`:
-  checkpoint folders present for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
+  no runs recorded in the current registry yet
 
-Validation-summary folders currently present in
-`MyDrive/ProjectRoot/results/validation/`:
+Run modes seen in the registry:
 
-- `manual`:
-  validation outputs present for `L6_H512_A8`
-- `hybrid_char_bpe`:
-  validation outputs present for `L6_H512_A8`
-- `byte_bpe`:
-  validation outputs present for `L6_H512_A8`, including a continuation run
-- `glyberta`:
-  validation outputs present for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
-
-Test-evaluation folders currently present in
-`MyDrive/ProjectRoot/results/test_evaluation/`:
-
-- all four tokenizer families currently have saved test outputs for
-  `L6_H512_A8`
-- the saved `byte_bpe` test output is for the continuation run
-- the saved `manual`, `glyberta`, and `hybrid_char_bpe` test outputs are for
-  the `L6_H512_A8` runs being compared in the current slides
+- fresh training runs
+- continuation runs from `best_model`
 
 Notes:
 
-- checkpoint presence is the best evidence that a training run was started and
-  wrote output folders
-- validation-summary presence is narrower: it only shows runs that also made it
-  through notebook 5 in this rebuilt workflow
-- test-evaluation presence is narrower still: it shows which runs currently
-  have notebook-6 outputs saved for comparison
-- the registry can still be helpful for run modes and notes, but the folder
-  structure is a better source for the current architecture inventory
+- the Drive run index also contains test-only rows where the architecture
+  fields are not fully populated, so the architecture summary above is based on
+  rows with recorded model dimensions
+- at the time this README was updated, the registry shows completed runs for
+  the original three tokenizer families and at least one in-progress
+  historical run in the `L4_H384_A6` family
 
 ## Evaluation Workflow
 
@@ -456,7 +377,6 @@ The current evaluation workflow separates:
   - macro and weighted precision/recall/F1
   - per-class metrics
   - tokenizer-specific ROC and precision-recall plots
-  - all-token top-1 correctness ROC and PR analyses
   - qualitative-probe examples
 
 ## Reproducibility Notes
@@ -481,10 +401,10 @@ accordingly.
 This rebuild currently includes:
 
 - all six main notebooks
-- tokenizer generation for all four tokenizer families
-- preprocessing for all four tokenizer families
-- pretraining runs for all four tokenizer families
-- validation diagnostics for all four tokenizer families
+- tokenizer generation for all three tokenizer families
+- preprocessing for all three tokenizer families
+- pretraining runs for all three tokenizer families
+- validation diagnostics for all three tokenizer families
 - test-set evaluation outputs for the tokenizer comparison workflow
 
 ## Notes
