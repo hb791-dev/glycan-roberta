@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Sequence
 from functools import lru_cache
 from html import escape
+import hashlib
 import json
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 if TYPE_CHECKING:
@@ -31,6 +33,40 @@ def _post_form_json(url: str, data: dict[str, Any], timeout: int = 60) -> Any:
     with urlopen(request, timeout=timeout) as response:
         text = response.read().decode("utf-8")
     return json.loads(text)
+
+
+def _download_binary(url: str, timeout: int = 60) -> bytes:
+    """Download one image payload as raw bytes."""
+    request = Request(url, method="GET")
+    with urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def _image_file_to_data_uri(image_path: str | Path) -> str:
+    """Convert one saved local image file into a standalone HTML data URI."""
+    image_path = Path(image_path)
+    mime_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml",
+    }.get(image_path.suffix.lower(), "application/octet-stream")
+    encoded_bytes = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded_bytes}"
+
+
+def _cartoon_asset_filename(
+    sequence: str,
+    accession: str,
+    image_format: str,
+) -> str:
+    """Create a stable filename for one saved cartoon asset."""
+    if accession:
+        stem = accession
+    else:
+        stem = f"sequence_{hashlib.sha1(sequence.encode('utf-8')).hexdigest()[:12]}"
+    normalized_suffix = image_format.lower().lstrip(".") or "svg"
+    return f"{stem}.{normalized_suffix}"
 
 
 def _submit_task(
@@ -201,6 +237,65 @@ def build_cartoon_manifest(
     return pd.DataFrame(manifest_rows)
 
 
+def cache_cartoon_images(
+    cartoon_manifest_df,
+    asset_dir,
+    image_format: str = "svg",
+    download_timeout: int = 60,
+):
+    """Download resolved cartoon images so HTML reports do not depend on expiring URLs.
+
+    GlyTouCan-backed images usually live at stable accession URLs, but Glymage
+    on-demand renders use temporary task IDs. Saving both kinds of images into the
+    results folder makes the final HTML portable and much less fragile.
+    """
+    import pandas as pd
+
+    asset_dir = Path(asset_dir)
+    asset_dir.mkdir(parents=True, exist_ok=True)
+
+    cached_df = cartoon_manifest_df.copy()
+    if "local_image_path" not in cached_df.columns:
+        cached_df["local_image_path"] = ""
+    if "local_image_status" not in cached_df.columns:
+        cached_df["local_image_status"] = ""
+
+    for row_index, row in cached_df.iterrows():
+        image_url = str(row.get("image_url", "") or "").strip()
+        if not image_url:
+            cached_df.at[row_index, "local_image_status"] = "no_remote_image"
+            continue
+
+        accession = str(row.get("accession", "") or "").strip()
+        sequence = str(row.get("sequence", "") or "")
+        remote_suffix = Path(urlparse(image_url).path).suffix.lstrip(".")
+        asset_name = _cartoon_asset_filename(
+            sequence=sequence,
+            accession=accession,
+            image_format=remote_suffix or image_format,
+        )
+        asset_path = asset_dir / asset_name
+
+        if asset_path.exists() and asset_path.stat().st_size > 0:
+            cached_df.at[row_index, "local_image_path"] = str(asset_path)
+            cached_df.at[row_index, "local_image_status"] = "cached_existing"
+            continue
+
+        try:
+            # Download immediately while the task-backed image is still valid.
+            asset_bytes = _download_binary(image_url, timeout=download_timeout)
+            asset_path.write_bytes(asset_bytes)
+            cached_df.at[row_index, "local_image_path"] = str(asset_path)
+            cached_df.at[row_index, "local_image_status"] = "downloaded"
+        except (URLError, TimeoutError, OSError, ValueError) as error:
+            existing_errors = str(row.get("lookup_errors", "") or "").strip()
+            combined_errors = [value for value in (existing_errors, f"local_cache_error: {error}") if value]
+            cached_df.at[row_index, "lookup_errors"] = "; ".join(combined_errors)
+            cached_df.at[row_index, "local_image_status"] = "download_failed"
+
+    return cached_df
+
+
 def cartoon_lookup_from_manifest(cartoon_manifest_df) -> dict[str, dict[str, str]]:
     """Convert a cartoon manifest dataframe into a sequence-keyed lookup."""
     return cartoon_manifest_df.set_index("sequence").to_dict(orient="index")
@@ -212,10 +307,17 @@ def format_glycan_sequence_block(sequence: str, cartoon_row: dict[str, str] | No
     caption_html = ""
     if cartoon_row is not None:
         image_url = cartoon_row.get("image_url", "")
+        local_image_path = cartoon_row.get("local_image_path", "")
         accession = cartoon_row.get("accession", "")
         glytoucan_url = cartoon_row.get("glytoucan_url", "")
         lookup_status = cartoon_row.get("lookup_status", "")
-        if image_url:
+        if local_image_path and Path(local_image_path).exists():
+            # Embed the saved file directly so a copied HTML report still renders.
+            image_html = (
+                f"<img src='{escape(_image_file_to_data_uri(local_image_path), quote=True)}' "
+                f"alt='Cartoon for {escape(sequence)}'>"
+            )
+        elif image_url:
             image_html = f"<img src='{escape(image_url, quote=True)}' alt='Cartoon for {escape(sequence)}'>"
         if accession and glytoucan_url:
             # When an accession is available, link it directly so the HTML report can

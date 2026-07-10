@@ -18,6 +18,7 @@ from transformers import AutoModelForMaskedLM, AutoTokenizer
 
 from src.glycan_cartoons import (
     build_cartoon_manifest,
+    cache_cartoon_images,
     cartoon_lookup_from_manifest,
     format_glycan_sequence_block,
 )
@@ -1021,9 +1022,21 @@ def save_variant_similarity_outputs(
     html_dir = output_path / "html"
     matrix_dir = output_path / "anchor_matrices"
     histogram_dir = output_path / "histograms"
+    cartoon_dir = output_path / "cartoons"
     html_dir.mkdir(parents=True, exist_ok=True)
     matrix_dir.mkdir(parents=True, exist_ok=True)
     histogram_dir.mkdir(parents=True, exist_ok=True)
+    cartoon_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save remote cartoons locally before the HTML is rendered. This is especially
+    # important for on-demand Glymage task URLs, which may expire after the notebook
+    # run even though the analysis results themselves are perfectly valid.
+    cartoon_manifest_df = cache_cartoon_images(
+        cartoon_manifest_df=cartoon_manifest_df,
+        asset_dir=cartoon_dir,
+        image_format=str(config_payload.get("cartoon_image_format", "svg")),
+        download_timeout=int(config_payload.get("lookup_timeout", 60)),
+    )
 
     variant_results_df.to_csv(variant_results_path, index=False)
     tokenization_preview_df.to_csv(tokenization_preview_path, index=False)
@@ -1084,6 +1097,7 @@ def save_variant_similarity_outputs(
         "config_path": config_path,
         "html_dir": html_dir,
         "histogram_dir": histogram_dir,
+        "cartoon_dir": cartoon_dir,
         "overall_histogram_path": overall_histogram_path,
         "index_html_path": index_html_path,
         "anchor_html_paths": anchor_html_paths,
