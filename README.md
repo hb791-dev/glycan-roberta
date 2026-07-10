@@ -274,6 +274,8 @@ Notes:
 - the reusable embedding and similarity logic lives in `src/similarity.py`
 - glycan cartoon lookup and generic cartoon HTML helpers live in `src/glycan_cartoons.py`
 - the notebook saves outputs under `results/similarity/`
+- similarity results follow the same nested pattern as the other evaluation notebooks:
+  `results/similarity/<tokenizer_family>/<experiment_name>/`
 - this notebook is not split-specific evaluation: it does not automatically load
   only the train, validation, or test set
 - the selected checkpoint may come from a run associated with a dataset split,
