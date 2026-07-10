@@ -623,42 +623,42 @@ def render_anchor_similarity_html(
             + "</div>"
         )
 
-    section_html_parts = []
-    grouped = anchor_rows_df.groupby("variant_set", sort=False)
-    for variant_set, set_df in grouped:
-        row_html_parts = []
-        sorted_rows = set_df.sort_values(
-            ["rank_within_anchor", "variant_id"],
-            kind="stable",
+    ranked_row_html_parts = []
+    sorted_rows = anchor_rows_df.sort_values(
+        ["rank_within_anchor", "variant_id"],
+        kind="stable",
+    )
+    for row in sorted_rows.itertuples(index=False):
+        variant_cartoon = cartoon_lookup.get(row.variant_sequence)
+        ranked_row_html_parts.append(
+            "<tr>"
+            f"<td><span class='rank-chip'>{int(row.rank_within_anchor)}</span></td>"
+            f"<td>{escape(str(row.variant_id))}</td>"
+            f"<td>{escape(_humanize_label(str(row.variant_set)))}</td>"
+            f"<td>{escape(_humanize_label(str(row.edit_type)))}</td>"
+            f"<td>{escape(str(row.edit_description))}</td>"
+            f"<td>{row.cosine_similarity:.3f}</td>"
+            f"<td>{format_glycan_sequence_block(str(row.variant_sequence), variant_cartoon)}</td>"
+            "</tr>"
         )
-        for row in sorted_rows.itertuples(index=False):
-            variant_cartoon = cartoon_lookup.get(row.variant_sequence)
-            row_html_parts.append(
-                "<tr>"
-                f"<td>{escape(str(row.variant_id))}</td>"
-                f"<td><span class='rank-chip'>{int(row.rank_within_anchor)}</span></td>"
-                f"<td>{escape(_humanize_label(str(row.edit_type)))}</td>"
-                f"<td>{escape(str(row.edit_description))}</td>"
-                f"<td>{row.cosine_similarity:.3f}</td>"
-                f"<td>{format_glycan_sequence_block(str(row.variant_sequence), variant_cartoon)}</td>"
-                "</tr>"
-            )
-
-        section_html_parts.append(
-            f"<h2>{escape(_variant_set_heading(variant_set))}</h2>"
-            "<p class='section-note'>Overall rank runs from 1 = most similar to 9 = least similar across all variants for this anchor.</p>"
-            "<table>"
-            "<thead><tr>"
-            "<th>Variant ID</th>"
-            "<th>Overall Rank</th>"
-            "<th>Edit Type</th>"
-            "<th>Edit Description</th>"
-            "<th>Cosine Similarity</th>"
-            "<th>Variant</th>"
-            "</tr></thead>"
-            f"<tbody>{''.join(row_html_parts)}</tbody>"
-            "</table>"
-        )
+    ranked_table_html = (
+        "<div class='ranking-panel'>"
+        "<h2>All 9 Variants In Rank Order</h2>"
+        "<p class='section-note'>This table is sorted by overall rank across the full anchor set, not by edit family.</p>"
+        "<table>"
+        "<thead><tr>"
+        "<th>Overall Rank</th>"
+        "<th>Variant ID</th>"
+        "<th>Edit Family</th>"
+        "<th>Edit Type</th>"
+        "<th>Edit Description</th>"
+        "<th>Cosine Similarity</th>"
+        "<th>Variant</th>"
+        "</tr></thead>"
+        f"<tbody>{''.join(ranked_row_html_parts)}</tbody>"
+        "</table>"
+        "</div>"
+    )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -695,6 +695,9 @@ def render_anchor_similarity_html(
       border: 1px solid #ddd;
       border-radius: 12px;
       padding: 16px;
+    }}
+    .ranking-panel {{
+      margin-bottom: 28px;
     }}
     .analysis-card img {{
       width: 100%;
@@ -772,7 +775,7 @@ def render_anchor_similarity_html(
     <p><strong>Variants in this group:</strong> {len(anchor_rows_df)}</p>
   </div>
   {analysis_media_html}
-  {''.join(section_html_parts)}
+  {ranked_table_html}
 </body>
 </html>
 """
