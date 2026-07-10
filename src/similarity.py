@@ -660,6 +660,45 @@ def render_anchor_similarity_html(
         "</div>"
     )
 
+    section_html_parts = []
+    grouped = anchor_rows_df.groupby("variant_set", sort=False)
+    for variant_set, set_df in grouped:
+        row_html_parts = []
+        set_sorted_rows = set_df.sort_values(
+            ["rank_within_anchor", "variant_id"],
+            kind="stable",
+        )
+        for row in set_sorted_rows.itertuples(index=False):
+            variant_cartoon = cartoon_lookup.get(row.variant_sequence)
+            row_html_parts.append(
+                "<tr>"
+                f"<td>{escape(str(row.variant_id))}</td>"
+                f"<td><span class='rank-chip'>{int(row.rank_within_anchor)}</span></td>"
+                f"<td>{escape(_humanize_label(str(row.edit_type)))}</td>"
+                f"<td>{escape(str(row.edit_description))}</td>"
+                f"<td>{row.cosine_similarity:.3f}</td>"
+                f"<td>{format_glycan_sequence_block(str(row.variant_sequence), variant_cartoon)}</td>"
+                "</tr>"
+            )
+
+        section_html_parts.append(
+            "<div class='set-panel'>"
+            f"<h2>{escape(_variant_set_heading(variant_set))}</h2>"
+            "<p class='section-note'>The overall-rank column still refers to the full 1-9 anchor ordering.</p>"
+            "<table>"
+            "<thead><tr>"
+            "<th>Variant ID</th>"
+            "<th>Overall Rank</th>"
+            "<th>Edit Type</th>"
+            "<th>Edit Description</th>"
+            "<th>Cosine Similarity</th>"
+            "<th>Variant</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(row_html_parts)}</tbody>"
+            "</table>"
+            "</div>"
+        )
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -697,6 +736,9 @@ def render_anchor_similarity_html(
       padding: 16px;
     }}
     .ranking-panel {{
+      margin-bottom: 28px;
+    }}
+    .set-panel {{
       margin-bottom: 28px;
     }}
     .analysis-card img {{
@@ -776,6 +818,7 @@ def render_anchor_similarity_html(
   </div>
   {analysis_media_html}
   {ranked_table_html}
+  {''.join(section_html_parts)}
 </body>
 </html>
 """
