@@ -313,8 +313,12 @@ Main outputs:
 - `html/<accession>_specific_vs_all.html`
 
 Notes:
-- this notebook expects an accession-aware metadata table in Drive so GlyTouCan
-  IDs can be tied back to the held-out test split
+- this notebook uses the real held-out `test.txt` split in Drive and assigns
+  stable internal test-row IDs to the corpus side because the current Drive
+  project does not include an accession-aware test-set table
+- the four professor-selected GlyTouCan accessions are currently configured
+  directly inside the notebook together with their compact IUPAC sequences, and
+  they may be external query glycans rather than members of the held-out split
 - the reusable mechanics live in `src/similarity.py`
 - the notebook saves outputs under `results/similarity_scaleup/`
 - the HTML reports are standalone and meant to be double-clicked locally after

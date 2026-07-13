@@ -1300,21 +1300,6 @@ def validate_scaleup_similarity_inputs(
     cleaned_corpus_df = _clean_similarity_dataframe(corpus_df, accession_col=accession_col, sequence_col=sequence_col)
     cleaned_query_df = _clean_similarity_dataframe(query_df, accession_col=accession_col, sequence_col=sequence_col)
 
-    corpus_membership = cleaned_corpus_df[[accession_col, sequence_col]].drop_duplicates()
-    merged_membership = cleaned_query_df.merge(
-        corpus_membership,
-        on=[accession_col, sequence_col],
-        how="left",
-        indicator=True,
-    )
-    missing_query_rows = merged_membership.loc[merged_membership["_merge"] != "both", [accession_col, sequence_col]]
-    if not missing_query_rows.empty:
-        preview_records = missing_query_rows.head(5).to_dict("records")
-        raise ValueError(
-            "Every selected glycan must also exist in the test-set corpus for specific-vs-all analysis. "
-            f"Examples of missing rows: {preview_records}"
-        )
-
     if output_dir is not None:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -1562,10 +1547,12 @@ def compare_queries_to_corpus(
         comparison_df.insert(0, "query_accession", query_row[accession_col])
         comparison_df["cosine_similarity"] = similarity_scores.numpy()
 
-        comparison_df["is_self_match"] = (
-            (comparison_df["corpus_accession"] == query_row[accession_col])
-            & (comparison_df["corpus_sequence"] == query_row[sequence_col])
-        )
+        # In the scale-up workflow the held-out corpus may only have plain text
+        # split rows rather than trusted accession labels. Sequence identity is
+        # therefore the most stable self-match rule: anything with the exact
+        # same sequence as the query is treated as the self row for ranking and
+        # summary purposes.
+        comparison_df["is_self_match"] = comparison_df["corpus_sequence"] == query_row[sequence_col]
         comparison_df = comparison_df.sort_values(
             ["cosine_similarity", "corpus_accession", "corpus_sequence"],
             ascending=[False, True, True],
@@ -2402,13 +2389,20 @@ def run_scaleup_similarity_analysis(
         max_length=max_length,
         batch_size=batch_size,
     )
-
-    query_embedding_indices = [
-        corpus_embedding_bundle["sequence_to_index"][sequence]
-        for sequence in cleaned_query_df[sequence_col].tolist()
-    ]
-    query_index_tensor = torch.tensor(query_embedding_indices, dtype=torch.long)
-    query_normalized_embeddings = corpus_embedding_bundle["normalized_unique_embeddings"][query_index_tensor]
+    # The selected glycans do not need to be members of the held-out test split.
+    # Embed them separately so specific-vs-all can compare an external query panel
+    # against the full test corpus.
+    query_embedding_bundle = build_embedding_lookup_for_dataframe(
+        cleaned_query_df,
+        tokenizer=tokenizer,
+        model=model,
+        accession_col=accession_col,
+        sequence_col=sequence_col,
+        device=device,
+        max_length=max_length,
+        batch_size=batch_size,
+    )
+    query_normalized_embeddings = query_embedding_bundle["normalized_embeddings"]
 
     all_vs_all_artifacts = build_all_vs_all_artifacts(
         corpus_df=cleaned_corpus_df,
@@ -2488,6 +2482,7 @@ def run_scaleup_similarity_analysis(
         "corpus_df": corpus_embedding_bundle["sequence_df"],
         "query_df": notebook_query_df,
         "corpus_embedding_bundle": corpus_embedding_bundle,
+        "query_embedding_bundle": query_embedding_bundle,
         "all_vs_all_artifacts": all_vs_all_artifacts,
         "specific_vs_all_results_df": specific_vs_all_results_df,
         "specific_vs_all_summary_df": specific_vs_all_summary_df,
