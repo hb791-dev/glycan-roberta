@@ -57,7 +57,8 @@ glycan-roberta/
 │   ├── 04_roberta_pretraining.ipynb
 │   ├── 05_validation_diagnostics.ipynb
 │   ├── 06_test_set_evaluation.ipynb
-│   └── 07_similarity_analysis.ipynb
+│   ├── 07_similarity_analysis.ipynb
+│   └── 08_similarity_scaleup.ipynb
 ├── src/
 │   ├── glycan_cartoons.py
 │   ├── similarity.py
@@ -101,7 +102,8 @@ MyDrive/ProjectRoot/
 │   ├── exploration/
 │   ├── validation/
 │   ├── test_evaluation/
-│   └── similarity/
+│   ├── similarity/
+│   └── similarity_scaleup/
 └── registry/
     └── run_index.csv
 ```
@@ -285,6 +287,38 @@ Notes:
   whole-test-set similarity sweeps
 - the current notebook emphasizes all-variant histograms and one overall 1-to-9
   anchor ranking rather than heatmap-style visualization
+
+### `08_similarity_scaleup.ipynb`
+
+Purpose:
+- run a broader test-set similarity analysis after the smaller manual variant review
+- load one saved checkpoint and compare the full held-out test set against itself
+- run `all vs all` similarity across the test set to get the background distribution
+- run `specific vs all` similarity for professor-selected glycans against the test set
+- build threshold-based similarity clouds and HTML reports for the selected glycans
+
+Main outputs:
+- `test_corpus_sequences.csv`
+- `selected_glycans.csv`
+- `all_vs_all_similarity_matrix.csv`
+- `all_vs_all_summary.csv`
+- `all_vs_all_top_neighbors.csv`
+- `specific_vs_all_ranked.csv`
+- `specific_vs_all_distribution_summary.csv`
+- `specific_vs_all_threshold_clouds.csv`
+- `specific_vs_all_threshold_summary.csv`
+- `scaleup_cartoon_manifest.csv`
+- `histograms/`
+- `html/index.html`
+- `html/<accession>_specific_vs_all.html`
+
+Notes:
+- this notebook expects an accession-aware metadata table in Drive so GlyTouCan
+  IDs can be tied back to the held-out test split
+- the reusable mechanics live in `src/similarity.py`
+- the notebook saves outputs under `results/similarity_scaleup/`
+- the HTML reports are standalone and meant to be double-clicked locally after
+  the notebook run finishes
 
 ## Tokenizer Settings In This Workflow
 
