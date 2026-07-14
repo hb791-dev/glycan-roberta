@@ -9,6 +9,7 @@ from html import escape
 import hashlib
 import json
 from pathlib import Path
+import re
 import time
 from typing import TYPE_CHECKING, Any
 from urllib.error import URLError
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 GLYLOOKUP_BASE_URL = "https://glylookup.glyomics.org"
 GLYMAGE_BASE_URL = "https://glymage.glyomics.org"
 GLYTOUCAN_BASE_URL = "https://glytoucan.org/Structures/Glycans"
+GLYTOUCAN_ACCESSION_PATTERN = re.compile(r"^[A-Z][0-9]{5}[A-Z]{2}$")
 
 
 def _post_form_json(url: str, data: dict[str, Any], timeout: int = 60) -> Any:
@@ -64,6 +66,14 @@ def _normalize_manifest_text(value) -> str:
         return ""
     text = str(value).strip()
     return "" if text.lower() == "nan" else text
+
+
+def _normalize_glytoucan_accession(accession) -> str:
+    """Return the accession only when it looks like a real GlyTouCan ID."""
+    normalized_accession = _normalize_manifest_text(accession).upper()
+    if GLYTOUCAN_ACCESSION_PATTERN.fullmatch(normalized_accession):
+        return normalized_accession
+    return ""
 
 
 def _cartoon_asset_filename(
@@ -125,7 +135,7 @@ def _direct_accession_metadata(
     display: str,
 ) -> dict[str, str]:
     """Build the stable metadata we can derive directly from one accession."""
-    normalized_accession = _normalize_manifest_text(accession)
+    normalized_accession = _normalize_glytoucan_accession(accession)
     return {
         "sequence": sequence,
         "accession": normalized_accession,
@@ -140,6 +150,12 @@ def _is_task_backed_image_url(image_url: str) -> bool:
     """Return True when the URL depends on a temporary Glymage task ID."""
     normalized_url = _normalize_manifest_text(image_url)
     return normalized_url.startswith(f"{GLYMAGE_BASE_URL}/getimage?task_id=")
+
+
+def _is_accession_backed_image_url(image_url: str) -> bool:
+    """Return True when the URL is one of the stable Glymage accession image URLs."""
+    normalized_url = _normalize_manifest_text(image_url)
+    return normalized_url.startswith(f"{GLYMAGE_BASE_URL}/image/snfg/")
 
 
 def _reuse_or_refresh_existing_row(
@@ -161,10 +177,10 @@ def _reuse_or_refresh_existing_row(
         return None
 
     normalized_row = {key: _normalize_manifest_text(value) for key, value in existing_row.items()}
-    existing_accession = normalized_row.get("accession", "")
+    existing_accession = _normalize_glytoucan_accession(normalized_row.get("accession", ""))
     existing_image_url = normalized_row.get("image_url", "")
     existing_local_path = normalized_row.get("local_image_path", "")
-    preferred_accession = supplied_accession or existing_accession
+    preferred_accession = _normalize_glytoucan_accession(supplied_accession) or existing_accession
 
     if preferred_accession:
         refreshed_row = dict(normalized_row)
@@ -185,9 +201,19 @@ def _reuse_or_refresh_existing_row(
         return refreshed_row
 
     if existing_local_path:
+        normalized_row["accession"] = existing_accession
+        if not existing_accession:
+            normalized_row["glytoucan_url"] = ""
         return normalized_row
 
-    if existing_image_url and not _is_task_backed_image_url(existing_image_url):
+    if (
+        existing_image_url
+        and not _is_task_backed_image_url(existing_image_url)
+        and (existing_accession or not _is_accession_backed_image_url(existing_image_url))
+    ):
+        normalized_row["accession"] = existing_accession
+        if not existing_accession:
+            normalized_row["glytoucan_url"] = ""
         return normalized_row
 
     return None
@@ -266,7 +292,7 @@ def resolve_cartoon_metadata(
     # metadata over and over within one Python session.
     metadata = {
         "sequence": sequence,
-        "accession": _normalize_manifest_text(accession),
+        "accession": _normalize_glytoucan_accession(accession),
         "glytoucan_url": "",
         "image_url": "",
         "lookup_status": "not_attempted",
@@ -352,7 +378,7 @@ def build_cartoon_manifest(
     import pandas as pd
 
     accession_lookup = {
-        str(sequence): _normalize_manifest_text(accession)
+        str(sequence): _normalize_glytoucan_accession(accession)
         for sequence, accession in (accession_by_sequence or {}).items()
     }
     unique_sequences = []
