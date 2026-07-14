@@ -420,6 +420,9 @@ def build_cartoon_manifest(
         existing_df = pd.DataFrame(existing_manifest_df).copy()
         if "sequence" in existing_df.columns:
             existing_df["sequence"] = existing_df["sequence"].fillna("").map(str)
+            # Borrowed cache manifests can contain the same sequence more than once
+            # across runs. Keep the last copy so later-appended sources still win.
+            existing_df = existing_df.drop_duplicates(subset=["sequence"], keep="last")
             existing_lookup = existing_df.set_index("sequence").to_dict(orient="index")
 
     manifest_rows = []
@@ -555,6 +558,7 @@ def cartoon_lookup_from_manifest(cartoon_manifest_df) -> dict[str, dict[str, str
     normalized_df = cartoon_manifest_df.copy()
     for column_name in normalized_df.columns:
         normalized_df[column_name] = normalized_df[column_name].map(_normalize_manifest_text)
+    normalized_df = normalized_df.drop_duplicates(subset=["sequence"], keep="last")
     return normalized_df.set_index("sequence").to_dict(orient="index")
 
 
