@@ -580,6 +580,328 @@ def _format_summary_table_rows(summary_row: dict, ordered_fields: Sequence[tuple
 
 
 # ---------------------------------------------------------------------------
+# PCA helpers
+# ---------------------------------------------------------------------------
+
+def attach_pca_to_scaleup_index_html(
+    index_html_path,
+    image_filename: str | None = None,
+    focus_accession: str | None = None,
+    threshold: float = 0.90,
+    pca_panels: Sequence[dict] | None = None,
+) -> Path:
+    """Insert one or more PCA sections into the saved top-level HTML report.
+
+    On reruns, this helper replaces the older PCA section instead of stacking
+    duplicates. When multiple focus accessions are supplied, each gets its own
+    PCA card tied to the same active threshold.
+    """
+    index_html_path = Path(index_html_path)
+    html = index_html_path.read_text(encoding="utf-8")
+
+    start_marker = "<!-- PCA_SECTION_START -->"
+    end_marker = "<!-- PCA_SECTION_END -->"
+    if start_marker in html and end_marker in html:
+        start_index = html.index(start_marker)
+        end_index = html.index(end_marker) + len(end_marker)
+        html = html[:start_index] + html[end_index:]
+
+    if pca_panels is None:
+        if image_filename is None or focus_accession is None:
+            raise ValueError("Provide either pca_panels or the single-image PCA arguments.")
+        pca_panels = [
+            {
+                "image_filename": image_filename,
+                "focus_accession": focus_accession,
+                "threshold": float(threshold),
+            }
+        ]
+
+    panel_html_parts = []
+    for panel in pca_panels:
+        panel_threshold = float(panel.get("threshold", threshold))
+        panel_focus_accession = str(panel["focus_accession"])
+        panel_image_filename = str(panel["image_filename"])
+        panel_html_parts.append(
+            "  <div class='analysis-card'>"
+            "<h2>PCA Embedding View</h2>"
+            f"<p>This PCA uses the active threshold <strong>{panel_threshold:.2f}</strong> "
+            f"and highlights the cloud for <strong>{escape(panel_focus_accession)}</strong>. "
+            "It is a simple embedding-space view to support the ranked neighbors and "
+            "threshold-cloud results, not to replace them.</p>"
+            f"<img src='{escape(panel_image_filename, quote=True)}' "
+            f"alt='PCA embedding view for {escape(panel_focus_accession)} at threshold {panel_threshold:.2f}'>"
+            "</div>"
+        )
+
+    pca_html = "\n  <!-- PCA_SECTION_START -->\n" + "\n".join(panel_html_parts) + "\n  <!-- PCA_SECTION_END -->\n"
+    html = html.replace("</body>", pca_html + "</body>")
+    index_html_path.write_text(html, encoding="utf-8")
+    return index_html_path
+
+
+def build_focus_cloud_membership(
+    threshold_cloud_df,
+    accession: str,
+    threshold: float,
+) -> tuple["pd.DataFrame", set[str]]:
+    """Return one query's threshold-cloud rows plus the accession membership set."""
+    focus_cloud_df = threshold_cloud_df.loc[
+        (threshold_cloud_df["query_accession"] == accession)
+        & (threshold_cloud_df["threshold"] == float(threshold))
+    ].copy()
+    focus_cloud_accessions = set(focus_cloud_df["corpus_accession"].tolist())
+    return focus_cloud_df, focus_cloud_accessions
+
+
+def _normalize_focus_accessions(
+    focus_accessions,
+    selected_accessions: Sequence[str],
+) -> list[str]:
+    """Return a validated list of focus accessions for PCA rendering.
+
+    The PCA helper supports three cases:
+    - `None`: default to the first selected accession
+    - one accession as a string
+    - multiple accessions as a list/tuple
+    """
+    selected_accession_list = [str(accession) for accession in selected_accessions]
+    if not selected_accession_list:
+        raise ValueError("Need at least one selected glycan to choose PCA focus accessions.")
+
+    if focus_accessions is None:
+        requested_focus_accessions = [selected_accession_list[0]]
+    elif isinstance(focus_accessions, str):
+        requested_focus_accessions = [focus_accessions]
+    else:
+        requested_focus_accessions = [str(accession) for accession in focus_accessions]
+
+    normalized_focus_accessions: list[str] = []
+    seen_accessions: set[str] = set()
+    for accession in requested_focus_accessions:
+        if accession not in seen_accessions:
+            normalized_focus_accessions.append(accession)
+            seen_accessions.add(accession)
+
+    invalid_accessions = [
+        accession for accession in normalized_focus_accessions
+        if accession not in selected_accession_list
+    ]
+    if invalid_accessions:
+        raise ValueError("PCA focus accession(s) must be included in the selected glycan run panel.")
+
+    return normalized_focus_accessions
+
+
+def save_scaleup_pca_outputs(
+    results_bundle: dict,
+    query_metadata_df,
+    output_dir,
+    focus_accessions: str | Sequence[str] | None = None,
+    threshold: float = 0.90,
+    background_sample_size: int | None = 2000,
+    random_state: int = 7,
+    background_point_size: int | float = 10,
+    cloud_point_size: int | float = 28,
+    query_point_size: int | float = 110,
+    image_filename: str = "pca_embedding_view.png",
+    coordinates_filename: str = "pca_coordinates.csv",
+    selected_filename: str = "pca_selected_glycans.csv",
+    include_in_html: bool = True,
+) -> dict:
+    """Build, save, and optionally attach scale-up PCA view(s) to HTML.
+
+    This helper treats PCA as a supporting report artifact built from the
+    already-computed similarity embeddings. It saves one image, one full
+    coordinate table, one selected-glycan coordinate table, and one or more
+    focus-specific PCA images. It can also patch the top-level HTML report so
+    those PCA views travel with the rest of the results.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    from sklearn.decomposition import PCA
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    query_df = _clean_similarity_dataframe(results_bundle["query_df"], accession_col="accession", sequence_col="sequence")
+    corpus_df = _clean_similarity_dataframe(results_bundle["corpus_df"], accession_col="accession", sequence_col="sequence")
+    selected_accessions = query_df["accession"].tolist()
+    if not selected_accessions:
+        raise ValueError("Need at least one selected glycan to build PCA outputs.")
+    normalized_focus_accessions = _normalize_focus_accessions(focus_accessions, selected_accessions)
+
+    metadata_df = pd.DataFrame(query_metadata_df).copy()
+    if "accession" not in metadata_df.columns:
+        raise ValueError("query_metadata_df must include an 'accession' column.")
+    label_lookup = (
+        metadata_df.assign(accession=metadata_df["accession"].map(str))
+        .set_index("accession")
+        .get("label")
+    )
+    label_lookup = {} if label_lookup is None else label_lookup.to_dict()
+
+    query_plot_df = query_df[["accession", "sequence"]].copy()
+    query_plot_df["label"] = query_plot_df["accession"].map(
+        lambda accession: str(label_lookup.get(str(accession), accession))
+    )
+    corpus_plot_df = corpus_df[["accession", "sequence"]].copy()
+
+    corpus_embeddings = results_bundle["corpus_embedding_bundle"]["normalized_embeddings"].numpy()
+    query_embeddings = results_bundle["query_embedding_bundle"]["normalized_embeddings"].numpy()
+    all_embeddings = np.vstack([corpus_embeddings, query_embeddings])
+
+    pca = PCA(n_components=2)
+    all_coordinates = pca.fit_transform(all_embeddings)
+
+    corpus_coordinates = all_coordinates[: len(corpus_plot_df)]
+    query_coordinates = all_coordinates[len(corpus_plot_df) :]
+    corpus_plot_df["pc1"] = corpus_coordinates[:, 0]
+    corpus_plot_df["pc2"] = corpus_coordinates[:, 1]
+    query_plot_df["pc1"] = query_coordinates[:, 0]
+    query_plot_df["pc2"] = query_coordinates[:, 1]
+
+    explained_variance = pca.explained_variance_ratio_ * 100
+
+    html_dir = Path(results_bundle["saved_paths"]["html_dir"])
+    pca_coordinates_path = output_path / coordinates_filename
+    pca_selected_path = output_path / selected_filename
+    query_pca_export_df = query_plot_df[["accession", "sequence", "label", "pc1", "pc2"]].copy()
+    query_pca_export_df["point_group"] = "selected_glycan"
+    corpus_pca_export_df = corpus_plot_df[["accession", "sequence", "pc1", "pc2"]].copy()
+    corpus_pca_export_df["point_group"] = "test_background"
+    pca_coordinates_df = pd.concat(
+        [corpus_pca_export_df, query_pca_export_df],
+        ignore_index=True,
+        sort=False,
+    )
+    pca_coordinates_df.to_csv(pca_coordinates_path, index=False)
+    selected_coordinates_df = query_plot_df[["accession", "label", "pc1", "pc2"]].copy()
+    selected_coordinates_df.to_csv(pca_selected_path, index=False)
+
+    pca_image_paths: dict[str, Path] = {}
+    focus_cloud_dfs: dict[str, "pd.DataFrame"] = {}
+    background_counts: dict[str, int] = {}
+    focus_cloud_sizes: dict[str, int] = {}
+    pca_panels: list[dict] = []
+
+    for focus_accession in normalized_focus_accessions:
+        focus_cloud_df, focus_cloud_accessions = build_focus_cloud_membership(
+            results_bundle["threshold_cloud_df"],
+            accession=focus_accession,
+            threshold=threshold,
+        )
+        focus_cloud_dfs[focus_accession] = focus_cloud_df
+        focus_cloud_sizes[focus_accession] = int(len(focus_cloud_df))
+
+        focus_plot_df = corpus_plot_df.copy()
+        focus_plot_df["in_focus_cloud"] = focus_plot_df["accession"].isin(focus_cloud_accessions)
+
+        background_plot_df = focus_plot_df.loc[~focus_plot_df["in_focus_cloud"]].copy()
+        if background_sample_size is not None and len(background_plot_df) > int(background_sample_size):
+            background_plot_df = background_plot_df.sample(
+                n=int(background_sample_size),
+                random_state=int(random_state),
+            )
+        background_counts[focus_accession] = int(len(background_plot_df))
+        focus_cloud_plot_df = focus_plot_df.loc[focus_plot_df["in_focus_cloud"]].copy()
+
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.scatter(
+            background_plot_df["pc1"],
+            background_plot_df["pc2"],
+            s=background_point_size,
+            c="#c7c7c7",
+            alpha=0.45,
+            edgecolors="none",
+            label="Test set background",
+        )
+        if not focus_cloud_plot_df.empty:
+            ax.scatter(
+                focus_cloud_plot_df["pc1"],
+                focus_cloud_plot_df["pc2"],
+                s=cloud_point_size,
+                c="#2a9d8f",
+                alpha=0.85,
+                edgecolors="white",
+                linewidths=0.4,
+                label=f"{focus_accession} active cloud",
+            )
+        ax.scatter(
+            query_plot_df["pc1"],
+            query_plot_df["pc2"],
+            s=query_point_size,
+            c="#d1495b",
+            marker="X",
+            edgecolors="black",
+            linewidths=0.7,
+            label="Selected glycans",
+        )
+        for row in query_plot_df.itertuples(index=False):
+            ax.annotate(
+                row.accession,
+                (row.pc1, row.pc2),
+                xytext=(6, 6),
+                textcoords="offset points",
+                fontsize=10,
+                fontweight="bold",
+            )
+
+        ax.set_title("PCA of test-set embeddings with selected glycans overlaid")
+        ax.set_xlabel(f"PC1 ({explained_variance[0]:.1f}% variance)")
+        ax.set_ylabel(f"PC2 ({explained_variance[1]:.1f}% variance)")
+        ax.legend(loc="best")
+        ax.grid(alpha=0.2)
+        fig.tight_layout()
+
+        if len(normalized_focus_accessions) == 1:
+            pca_image_path = html_dir / image_filename
+        else:
+            image_stem = Path(image_filename).stem
+            image_suffix = Path(image_filename).suffix or ".png"
+            pca_image_path = html_dir / f"{image_stem}_{focus_accession}{image_suffix}"
+        fig.savefig(pca_image_path, dpi=200)
+        plt.close(fig)
+
+        pca_image_paths[focus_accession] = pca_image_path
+        pca_panels.append(
+            {
+                "image_filename": pca_image_path.name,
+                "focus_accession": focus_accession,
+                "threshold": float(threshold),
+            }
+        )
+
+    if include_in_html:
+        attach_pca_to_scaleup_index_html(
+            index_html_path=results_bundle["saved_paths"]["index_html_path"],
+            pca_panels=pca_panels,
+        )
+
+    primary_focus_accession = normalized_focus_accessions[0]
+    primary_pca_image_path = pca_image_paths[primary_focus_accession]
+    return {
+        "pca_image_path": primary_pca_image_path,
+        "pca_image_paths": pca_image_paths,
+        "pca_coordinates_path": pca_coordinates_path,
+        "pca_selected_path": pca_selected_path,
+        "selected_coordinates_df": selected_coordinates_df,
+        "pca_coordinates_df": pca_coordinates_df,
+        "focus_cloud_df": focus_cloud_dfs[primary_focus_accession],
+        "focus_cloud_dfs": focus_cloud_dfs,
+        "focus_accession": primary_focus_accession,
+        "focus_accessions": normalized_focus_accessions,
+        "threshold": float(threshold),
+        "explained_variance": explained_variance,
+        "background_count": background_counts[primary_focus_accession],
+        "background_counts": background_counts,
+        "focus_cloud_size": focus_cloud_sizes[primary_focus_accession],
+        "focus_cloud_sizes": focus_cloud_sizes,
+    }
+
+
+# ---------------------------------------------------------------------------
 # HTML report builders
 # ---------------------------------------------------------------------------
 

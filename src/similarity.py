@@ -30,6 +30,8 @@ from src.similarity_scaleup import (
     _collect_scaleup_html_sequences,
     _format_summary_table_rows,
     _summarize_similarity_values,
+    attach_pca_to_scaleup_index_html,
+    build_focus_cloud_membership,
     build_all_vs_all_artifacts,
     build_embedding_lookup_for_dataframe,
     build_similarity_distribution_summary,
@@ -39,6 +41,7 @@ from src.similarity_scaleup import (
     render_scaleup_index_html,
     render_specific_vs_all_html,
     run_scaleup_similarity_analysis,
+    save_scaleup_pca_outputs,
     save_scaleup_similarity_outputs,
     validate_scaleup_similarity_inputs,
 )
