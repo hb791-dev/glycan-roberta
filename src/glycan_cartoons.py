@@ -55,6 +55,17 @@ def _image_file_to_data_uri(image_path: str | Path) -> str:
     return f"data:{mime_type};base64,{encoded_bytes}"
 
 
+def _normalize_manifest_text(value) -> str:
+    """Return one manifest value as a safe string, treating NaN-like values as blank."""
+    if value is None:
+        return ""
+    # Pandas uses NaN floats for missing string values in CSV-backed dataframes.
+    if isinstance(value, float) and value != value:
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() == "nan" else text
+
+
 def _cartoon_asset_filename(
     sequence: str,
     accession: str,
@@ -384,7 +395,10 @@ def cache_cartoon_images(
 
 def cartoon_lookup_from_manifest(cartoon_manifest_df) -> dict[str, dict[str, str]]:
     """Convert a cartoon manifest dataframe into a sequence-keyed lookup."""
-    return cartoon_manifest_df.set_index("sequence").to_dict(orient="index")
+    normalized_df = cartoon_manifest_df.copy()
+    for column_name in normalized_df.columns:
+        normalized_df[column_name] = normalized_df[column_name].map(_normalize_manifest_text)
+    return normalized_df.set_index("sequence").to_dict(orient="index")
 
 
 def format_glycan_sequence_block(sequence: str, cartoon_row: dict[str, str] | None) -> str:
@@ -392,11 +406,11 @@ def format_glycan_sequence_block(sequence: str, cartoon_row: dict[str, str] | No
     image_html = "<div class='cartoon-missing'>No cartoon resolved</div>"
     caption_html = ""
     if cartoon_row is not None:
-        image_url = cartoon_row.get("image_url", "")
-        local_image_path = cartoon_row.get("local_image_path", "")
-        accession = cartoon_row.get("accession", "")
-        glytoucan_url = cartoon_row.get("glytoucan_url", "")
-        lookup_status = cartoon_row.get("lookup_status", "")
+        image_url = _normalize_manifest_text(cartoon_row.get("image_url", ""))
+        local_image_path = _normalize_manifest_text(cartoon_row.get("local_image_path", ""))
+        accession = _normalize_manifest_text(cartoon_row.get("accession", ""))
+        glytoucan_url = _normalize_manifest_text(cartoon_row.get("glytoucan_url", ""))
+        lookup_status = _normalize_manifest_text(cartoon_row.get("lookup_status", ""))
         if local_image_path and Path(local_image_path).exists():
             # Embed the saved file directly so a copied HTML report still renders.
             image_html = (
