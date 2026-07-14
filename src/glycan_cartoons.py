@@ -495,13 +495,16 @@ def format_glycan_sequence_block(sequence: str, cartoon_row: dict[str, str] | No
         accession = _normalize_manifest_text(cartoon_row.get("accession", ""))
         glytoucan_url = _normalize_manifest_text(cartoon_row.get("glytoucan_url", ""))
         lookup_status = _normalize_manifest_text(cartoon_row.get("lookup_status", ""))
+        local_image_status = _normalize_manifest_text(cartoon_row.get("local_image_status", ""))
         if local_image_path and Path(local_image_path).exists():
             # Embed the saved file directly so a copied HTML report still renders.
             image_html = (
                 f"<img src='{escape(_image_file_to_data_uri(local_image_path), quote=True)}' "
                 f"alt='Cartoon for {escape(sequence)}'>"
             )
-        elif image_url:
+        elif image_url and not _is_task_backed_image_url(image_url):
+            # Stable accession-backed URLs are okay to reference directly if we do not
+            # have a local cached copy yet.
             image_html = f"<img src='{escape(image_url, quote=True)}' alt='Cartoon for {escape(sequence)}'>"
         if accession and glytoucan_url:
             # When an accession is available, link it directly so the HTML report can
@@ -510,6 +513,10 @@ def format_glycan_sequence_block(sequence: str, cartoon_row: dict[str, str] | No
                 f"<div class='cartoon-caption'><a href='{escape(glytoucan_url, quote=True)}' "
                 f"target='_blank' rel='noopener'>{escape(accession)}</a></div>"
             )
+        elif local_image_status:
+            # If a task-backed image was not cached successfully, show a plain status
+            # instead of leaving the browser to display a broken stale-image request.
+            caption_html = f"<div class='cartoon-caption'>{escape(local_image_status)}</div>"
         elif lookup_status:
             caption_html = f"<div class='cartoon-caption'>{escape(lookup_status)}</div>"
 
