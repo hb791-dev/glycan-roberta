@@ -560,6 +560,59 @@ def _collect_scaleup_html_sequences(
     return sequences
 
 
+def _collect_scaleup_html_sequence_records(
+    query_df,
+    query_results_df,
+    threshold_cloud_df,
+    neighbor_limit: int,
+    cloud_limit: int,
+) -> list[dict[str, str]]:
+    """Collect HTML-visible glycans together with any accession we already know.
+
+    The report only needs cartoons for glycans that will actually appear in the
+    HTML. Keeping accession information attached here lets the cartoon helper use
+    direct accession image URLs when they are available instead of depending on a
+    separate lookup service.
+    """
+    sequence_records: list[dict[str, str]] = []
+    seen_sequences: set[str] = set()
+
+    def _maybe_add(sequence: str, accession: str) -> None:
+        normalized_sequence = str(sequence).strip()
+        if not normalized_sequence or normalized_sequence in seen_sequences:
+            return
+        seen_sequences.add(normalized_sequence)
+        sequence_records.append(
+            {
+                "sequence": normalized_sequence,
+                "accession": str(accession).strip(),
+            }
+        )
+
+    for query_row in query_df.itertuples(index=False):
+        _maybe_add(str(query_row.sequence), str(query_row.accession))
+
+    for _, query_group_df in query_results_df.groupby(["query_accession", "query_sequence"], sort=False):
+        neighbor_slice = (
+            query_group_df.loc[~query_group_df["is_self_match"]]
+            .sort_values(["rank"], kind="stable")
+            .head(int(neighbor_limit))
+        )
+        for row in neighbor_slice.itertuples(index=False):
+            _maybe_add(str(row.corpus_sequence), str(row.corpus_accession))
+
+    if not threshold_cloud_df.empty:
+        for _, cloud_group_df in threshold_cloud_df.groupby(
+            ["query_accession", "query_sequence", "threshold"],
+            sort=False,
+        ):
+            limited_cloud_df = cloud_group_df.sort_values(["cloud_rank"], kind="stable").head(int(cloud_limit))
+            for row in limited_cloud_df.itertuples(index=False):
+                _maybe_add(str(row.corpus_sequence), str(row.corpus_accession))
+
+    return sequence_records
+
+
 def _format_summary_table_rows(summary_row: dict, ordered_fields: Sequence[tuple[str, str]]) -> str:
     """Render a compact two-column HTML summary table from one summary row."""
     row_html_parts = []
@@ -1464,6 +1517,18 @@ def save_scaleup_similarity_outputs(
         neighbor_limit=html_neighbor_limit,
         cloud_limit=html_cloud_limit,
     )
+    html_sequence_records = _collect_scaleup_html_sequence_records(
+        query_df=query_df,
+        query_results_df=specific_vs_all_results_df,
+        threshold_cloud_df=threshold_cloud_df,
+        neighbor_limit=html_neighbor_limit,
+        cloud_limit=html_cloud_limit,
+    )
+    accession_by_sequence = {
+        str(record["sequence"]): str(record["accession"]).strip()
+        for record in html_sequence_records
+        if str(record["sequence"]).strip()
+    }
     existing_cartoon_manifest_df = None
     if cartoon_manifest_path.exists():
         import pandas as pd
@@ -1473,6 +1538,7 @@ def save_scaleup_similarity_outputs(
     cartoon_manifest_df = build_cartoon_manifest(
         sequences=html_sequences,
         developer_email=developer_email,
+        accession_by_sequence=accession_by_sequence,
         image_format=cartoon_image_format,
         display="compact",
         lookup_timeout=lookup_timeout,

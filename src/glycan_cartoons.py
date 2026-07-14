@@ -118,6 +118,81 @@ def _candidate_cartoon_asset_paths(
     return candidate_paths
 
 
+def _direct_accession_metadata(
+    sequence: str,
+    accession: str,
+    image_format: str,
+    display: str,
+) -> dict[str, str]:
+    """Build the stable metadata we can derive directly from one accession."""
+    normalized_accession = _normalize_manifest_text(accession)
+    return {
+        "sequence": sequence,
+        "accession": normalized_accession,
+        "glytoucan_url": f"{GLYTOUCAN_BASE_URL}/{normalized_accession}",
+        "image_url": f"{GLYMAGE_BASE_URL}/image/snfg/{display}/{normalized_accession}.{image_format}",
+        "lookup_status": "accession_supplied",
+        "lookup_errors": "",
+    }
+
+
+def _is_task_backed_image_url(image_url: str) -> bool:
+    """Return True when the URL depends on a temporary Glymage task ID."""
+    normalized_url = _normalize_manifest_text(image_url)
+    return normalized_url.startswith(f"{GLYMAGE_BASE_URL}/getimage?task_id=")
+
+
+def _reuse_or_refresh_existing_row(
+    sequence: str,
+    existing_row: dict[str, Any] | None,
+    supplied_accession: str,
+    image_format: str,
+    display: str,
+) -> dict[str, str] | None:
+    """Return the best existing manifest row, or None when a fresh resolution is better.
+
+    Reuse is intentionally selective:
+    - if the notebook now knows an accession, prefer that stronger metadata
+    - if an older row already has an accession, rebuild direct stable URLs from it
+    - keep any working local-image cache pointer
+    - do not blindly trust stale task-backed `getimage?task_id=...` URLs
+    """
+    if existing_row is None:
+        return None
+
+    normalized_row = {key: _normalize_manifest_text(value) for key, value in existing_row.items()}
+    existing_accession = normalized_row.get("accession", "")
+    existing_image_url = normalized_row.get("image_url", "")
+    existing_local_path = normalized_row.get("local_image_path", "")
+    preferred_accession = supplied_accession or existing_accession
+
+    if preferred_accession:
+        refreshed_row = dict(normalized_row)
+        refreshed_row.update(
+            _direct_accession_metadata(
+                sequence=sequence,
+                accession=preferred_accession,
+                image_format=image_format,
+                display=display,
+            )
+        )
+        if existing_local_path:
+            refreshed_row["local_image_path"] = existing_local_path
+            refreshed_row["local_image_status"] = normalized_row.get("local_image_status", "")
+        else:
+            refreshed_row["local_image_path"] = ""
+            refreshed_row["local_image_status"] = ""
+        return refreshed_row
+
+    if existing_local_path:
+        return normalized_row
+
+    if existing_image_url and not _is_task_backed_image_url(existing_image_url):
+        return normalized_row
+
+    return None
+
+
 def _submit_task(
     base_url: str,
     task: dict[str, Any],
@@ -181,6 +256,7 @@ def _request_task(
 def resolve_cartoon_metadata(
     sequence: str,
     developer_email: str | None,
+    accession: str | None = None,
     image_format: str = "svg",
     display: str = "compact",
     lookup_timeout: int = 60,
@@ -190,12 +266,22 @@ def resolve_cartoon_metadata(
     # metadata over and over within one Python session.
     metadata = {
         "sequence": sequence,
-        "accession": "",
+        "accession": _normalize_manifest_text(accession),
         "glytoucan_url": "",
         "image_url": "",
         "lookup_status": "not_attempted",
         "lookup_errors": "",
     }
+
+    if metadata["accession"]:
+        # When an accession is already known, we can skip the fragile lookup step
+        # and build the stable image/link metadata directly.
+        return _direct_accession_metadata(
+            sequence=sequence,
+            accession=metadata["accession"],
+            image_format=image_format,
+            display=display,
+        )
 
     if developer_email is None or str(developer_email).strip() == "":
         metadata["lookup_status"] = "missing_email"
@@ -256,6 +342,7 @@ def resolve_cartoon_metadata(
 def build_cartoon_manifest(
     sequences: Sequence[str],
     developer_email: str | None,
+    accession_by_sequence: dict[str, str] | None = None,
     image_format: str = "svg",
     display: str = "compact",
     lookup_timeout: int = 60,
@@ -264,6 +351,10 @@ def build_cartoon_manifest(
     """Build one metadata table for all unique sequences in the analysis."""
     import pandas as pd
 
+    accession_lookup = {
+        str(sequence): _normalize_manifest_text(accession)
+        for sequence, accession in (accession_by_sequence or {}).items()
+    }
     unique_sequences = []
     seen_sequences: set[str] = set()
     for sequence in sequences:
@@ -281,25 +372,17 @@ def build_cartoon_manifest(
 
     manifest_rows = []
     for sequence in unique_sequences:
-        existing_row = existing_lookup.get(sequence)
-        if existing_row is not None:
-            existing_row = {key: "" if value is None else value for key, value in existing_row.items()}
-            local_image_path = str(existing_row.get("local_image_path", "") or "").strip()
-            # Prefer previously saved metadata when a local cartoon already exists.
-            if local_image_path and Path(local_image_path).exists():
-                manifest_rows.append(
-                    {
-                        "sequence": sequence,
-                        "accession": str(existing_row.get("accession", "") or ""),
-                        "glytoucan_url": str(existing_row.get("glytoucan_url", "") or ""),
-                        "image_url": str(existing_row.get("image_url", "") or ""),
-                        "lookup_status": str(existing_row.get("lookup_status", "") or "cached_existing"),
-                        "lookup_errors": str(existing_row.get("lookup_errors", "") or ""),
-                        "local_image_path": local_image_path,
-                        "local_image_status": str(existing_row.get("local_image_status", "") or "cached_existing"),
-                    }
-                )
-                continue
+        supplied_accession = accession_lookup.get(sequence, "")
+        reusable_row = _reuse_or_refresh_existing_row(
+            sequence=sequence,
+            existing_row=existing_lookup.get(sequence),
+            supplied_accession=supplied_accession,
+            image_format=image_format,
+            display=display,
+        )
+        if reusable_row is not None:
+            manifest_rows.append(reusable_row)
+            continue
 
         # Resolve each unique sequence once, then keep the results in a flat table that can
         # be saved, inspected in the notebook, or converted back into a lookup dictionary.
@@ -307,6 +390,7 @@ def build_cartoon_manifest(
             resolve_cartoon_metadata(
                 sequence=sequence,
                 developer_email=developer_email,
+                accession=supplied_accession,
                 image_format=image_format,
                 display=display,
                 lookup_timeout=lookup_timeout,
