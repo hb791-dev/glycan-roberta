@@ -146,6 +146,31 @@ def _direct_accession_metadata(
     }
 
 
+def _cache_only_manifest_row(
+    sequence: str,
+    accession: str,
+) -> dict[str, str]:
+    """Return one manifest row that records a cache-only miss without web lookup.
+
+    This keeps the downstream HTML/report code simple: the row still has the
+    standard manifest columns, but it intentionally carries no remote image URL.
+    That guarantees a cache-only notebook run never sneaks in a live website
+    request through the final HTML.
+    """
+    normalized_accession = _normalize_glytoucan_accession(accession)
+    glytoucan_url = f"{GLYTOUCAN_BASE_URL}/{normalized_accession}" if normalized_accession else ""
+    return {
+        "sequence": sequence,
+        "accession": normalized_accession,
+        "glytoucan_url": glytoucan_url,
+        "image_url": "",
+        "lookup_status": "cache_only_miss",
+        "lookup_errors": "Sequence was not found in the supplied cartoon cache.",
+        "local_image_path": "",
+        "local_image_status": "cache_only_miss",
+    }
+
+
 def _is_task_backed_image_url(image_url: str) -> bool:
     """Return True when the URL depends on a temporary Glymage task ID."""
     normalized_url = _normalize_manifest_text(image_url)
@@ -373,6 +398,7 @@ def build_cartoon_manifest(
     display: str = "compact",
     lookup_timeout: int = 60,
     existing_manifest_df=None,
+    allow_live_lookup: bool = True,
 ) -> "pd.DataFrame":
     """Build one metadata table for all unique sequences in the analysis."""
     import pandas as pd
@@ -410,6 +436,18 @@ def build_cartoon_manifest(
             manifest_rows.append(reusable_row)
             continue
 
+        if not allow_live_lookup:
+            # In cache-only mode we stop here on purpose. The calling notebook
+            # wants a fully offline HTML example, so a miss should stay a miss
+            # rather than triggering a fresh GlyLookup/Glymage request.
+            manifest_rows.append(
+                _cache_only_manifest_row(
+                    sequence=sequence,
+                    accession=supplied_accession,
+                )
+            )
+            continue
+
         # Resolve each unique sequence once, then keep the results in a flat table that can
         # be saved, inspected in the notebook, or converted back into a lookup dictionary.
         manifest_rows.append(
@@ -430,6 +468,7 @@ def cache_cartoon_images(
     asset_dir,
     image_format: str = "svg",
     download_timeout: int = 60,
+    allow_download: bool = True,
 ):
     """Download resolved cartoon images so HTML reports do not depend on expiring URLs.
 
@@ -472,7 +511,15 @@ def cache_cartoon_images(
 
         image_url = str(row.get("image_url", "") or "").strip()
         if not image_url:
-            cached_df.at[row_index, "local_image_status"] = "no_remote_image"
+            if not str(cached_df.at[row_index, "local_image_status"]).strip():
+                cached_df.at[row_index, "local_image_status"] = "no_remote_image"
+            continue
+
+        if not allow_download:
+            # Clear the remote URL before HTML generation so cache-only runs do
+            # not quietly fall back to the web in the browser.
+            cached_df.at[row_index, "image_url"] = ""
+            cached_df.at[row_index, "local_image_status"] = "cache_only_miss"
             continue
 
         remote_suffix = Path(urlparse(image_url).path).suffix.lstrip(".")

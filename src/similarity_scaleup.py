@@ -1464,6 +1464,8 @@ def save_scaleup_similarity_outputs(
     lookup_timeout: int = 60,
     html_neighbor_limit: int = 50,
     html_cloud_limit: int = 100,
+    cartoon_cache_manifest_path=None,
+    cartoon_cache_only: bool = False,
 ) -> dict:
     """Write the scale-up similarity outputs, including portable HTML reports, to disk."""
     output_path = Path(output_dir)
@@ -1530,10 +1532,28 @@ def save_scaleup_similarity_outputs(
         if str(record["sequence"]).strip()
     }
     existing_cartoon_manifest_df = None
+    existing_manifest_frames = []
     if cartoon_manifest_path.exists():
         import pandas as pd
 
-        existing_cartoon_manifest_df = pd.read_csv(cartoon_manifest_path)
+        existing_manifest_frames.append(pd.read_csv(cartoon_manifest_path))
+    if cartoon_cache_manifest_path is not None:
+        import pandas as pd
+
+        external_manifest_path = Path(cartoon_cache_manifest_path)
+        if not external_manifest_path.exists():
+            raise FileNotFoundError(f"Cartoon cache manifest not found: {external_manifest_path}")
+        if external_manifest_path.resolve() == cartoon_manifest_path.resolve():
+            external_manifest_path = None
+        if external_manifest_path is not None:
+            # Append the external cache after the current-run manifest so the cache
+            # source the user explicitly chose wins when the same sequence appears in
+            # both places.
+            existing_manifest_frames.append(pd.read_csv(external_manifest_path))
+    if existing_manifest_frames:
+        import pandas as pd
+
+        existing_cartoon_manifest_df = pd.concat(existing_manifest_frames, ignore_index=True)
     # Build cartoons only for sequences that will actually be shown in HTML.
     cartoon_manifest_df = build_cartoon_manifest(
         sequences=html_sequences,
@@ -1543,12 +1563,14 @@ def save_scaleup_similarity_outputs(
         display="compact",
         lookup_timeout=lookup_timeout,
         existing_manifest_df=existing_cartoon_manifest_df,
+        allow_live_lookup=not cartoon_cache_only,
     )
     cartoon_manifest_df = cache_cartoon_images(
         cartoon_manifest_df=cartoon_manifest_df,
         asset_dir=cartoon_dir,
         image_format=cartoon_image_format,
         download_timeout=lookup_timeout,
+        allow_download=not cartoon_cache_only,
     )
     cartoon_manifest_df.to_csv(cartoon_manifest_path, index=False)
     cartoon_lookup = cartoon_lookup_from_manifest(cartoon_manifest_df)
@@ -1647,6 +1669,8 @@ def run_scaleup_similarity_analysis(
     html_neighbor_limit: int = 50,
     html_cloud_limit: int = 100,
     model_dir=None,
+    cartoon_cache_manifest_path=None,
+    cartoon_cache_only: bool = False,
 ) -> dict:
     """Run the full test-set similarity scale-up workflow and save the outputs."""
     cleaned_corpus_df = _clean_similarity_dataframe(corpus_df, accession_col=accession_col, sequence_col=sequence_col)
@@ -1729,6 +1753,8 @@ def run_scaleup_similarity_analysis(
         "html_neighbor_limit": int(html_neighbor_limit),
         "html_cloud_limit": int(html_cloud_limit),
         "selected_accessions": notebook_query_df["accession"].tolist(),
+        "cartoon_cache_manifest_path": str(cartoon_cache_manifest_path) if cartoon_cache_manifest_path else "",
+        "cartoon_cache_only": bool(cartoon_cache_only),
     }
     saved_paths = save_scaleup_similarity_outputs(
         corpus_df=corpus_embedding_bundle["sequence_df"].rename(
@@ -1751,6 +1777,8 @@ def run_scaleup_similarity_analysis(
         lookup_timeout=lookup_timeout,
         html_neighbor_limit=html_neighbor_limit,
         html_cloud_limit=html_cloud_limit,
+        cartoon_cache_manifest_path=cartoon_cache_manifest_path,
+        cartoon_cache_only=cartoon_cache_only,
     )
 
     return {
