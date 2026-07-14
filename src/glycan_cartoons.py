@@ -511,6 +511,84 @@ def cartoon_lookup_from_manifest(cartoon_manifest_df) -> dict[str, dict[str, str
     return normalized_df.set_index("sequence").to_dict(orient="index")
 
 
+def summarize_cartoon_manifest(cartoon_manifest_df) -> dict[str, "pd.DataFrame"]:
+    """Return notebook-friendly summary tables for one cartoon manifest."""
+    import pandas as pd
+
+    manifest_df = pd.DataFrame(cartoon_manifest_df).copy()
+    if manifest_df.empty:
+        empty_counts_df = pd.DataFrame(columns=["value", "count"])
+        overview_df = pd.DataFrame(
+            [
+                {
+                    "total_sequences": 0,
+                    "real_accession_rows": 0,
+                    "stable_accession_url_rows": 0,
+                    "task_backed_url_rows": 0,
+                    "local_image_rows": 0,
+                    "download_failed_rows": 0,
+                }
+            ]
+        )
+        return {
+            "overview_df": overview_df,
+            "lookup_status_df": empty_counts_df,
+            "local_image_status_df": empty_counts_df,
+        }
+
+    normalized_df = manifest_df.copy()
+    for column_name in normalized_df.columns:
+        normalized_df[column_name] = normalized_df[column_name].map(_normalize_manifest_text)
+
+    accession_series = normalized_df.get("accession", pd.Series("", index=normalized_df.index)).map(
+        _normalize_glytoucan_accession
+    )
+    image_url_series = normalized_df.get("image_url", pd.Series("", index=normalized_df.index)).map(
+        _normalize_manifest_text
+    )
+    local_image_path_series = normalized_df.get("local_image_path", pd.Series("", index=normalized_df.index)).map(
+        _normalize_manifest_text
+    )
+    local_image_status_series = normalized_df.get(
+        "local_image_status", pd.Series("", index=normalized_df.index)
+    ).map(_normalize_manifest_text)
+    lookup_status_series = normalized_df.get("lookup_status", pd.Series("", index=normalized_df.index)).map(
+        _normalize_manifest_text
+    )
+
+    overview_df = pd.DataFrame(
+        [
+            {
+                "total_sequences": int(len(normalized_df)),
+                "real_accession_rows": int(accession_series.ne("").sum()),
+                "stable_accession_url_rows": int(image_url_series.map(_is_accession_backed_image_url).sum()),
+                "task_backed_url_rows": int(image_url_series.map(_is_task_backed_image_url).sum()),
+                "local_image_rows": int(local_image_path_series.ne("").sum()),
+                "download_failed_rows": int(local_image_status_series.eq("download_failed").sum()),
+            }
+        ]
+    )
+
+    lookup_status_df = (
+        lookup_status_series.replace("", "blank")
+        .value_counts(dropna=False)
+        .rename_axis("value")
+        .reset_index(name="count")
+    )
+    local_image_status_df = (
+        local_image_status_series.replace("", "blank")
+        .value_counts(dropna=False)
+        .rename_axis("value")
+        .reset_index(name="count")
+    )
+
+    return {
+        "overview_df": overview_df,
+        "lookup_status_df": lookup_status_df,
+        "local_image_status_df": local_image_status_df,
+    }
+
+
 def format_glycan_sequence_block(sequence: str, cartoon_row: dict[str, str] | None) -> str:
     """Render one compact HTML block for a glycan sequence and its cartoon."""
     image_html = "<div class='cartoon-missing'>No cartoon resolved</div>"
