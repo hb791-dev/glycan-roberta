@@ -865,6 +865,8 @@ def run_variant_similarity_analysis(
     model_dir=None,
 ) -> dict:
     """Run anchor-to-variant similarity analysis and save HTML reports."""
+    import pandas as pd
+
     preview_sequences = build_variant_preview_sequences(variant_records)
     variant_results_df = compare_anchor_variants(
         variant_records=variant_records,
@@ -875,12 +877,17 @@ def run_variant_similarity_analysis(
         batch_size=batch_size,
     )
     tokenization_preview_df = build_tokenization_preview(preview_sequences, tokenizer)
+    existing_cartoon_manifest_df = None
+    existing_cartoon_manifest_path = Path(output_dir) / "variant_cartoon_manifest.csv"
+    if existing_cartoon_manifest_path.exists():
+        existing_cartoon_manifest_df = pd.read_csv(existing_cartoon_manifest_path)
     cartoon_manifest_df = build_cartoon_manifest(
         sequences=preview_sequences,
         developer_email=developer_email,
         image_format=cartoon_image_format,
         display=cartoon_display,
         lookup_timeout=lookup_timeout,
+        existing_manifest_df=existing_cartoon_manifest_df,
     )
     # This summary table combines per-set stats with one "all 9 variants" row per anchor.
     distribution_summary_df = build_variant_summary_tables(variant_results_df)

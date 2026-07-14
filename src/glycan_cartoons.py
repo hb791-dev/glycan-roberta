@@ -69,6 +69,44 @@ def _cartoon_asset_filename(
     return f"{stem}.{normalized_suffix}"
 
 
+def _candidate_cartoon_asset_paths(
+    sequence: str,
+    accession: str,
+    asset_dir,
+    image_format: str = "svg",
+) -> list[Path]:
+    """Return plausible local asset paths for one sequence/accession pair.
+
+    This gives the cache layer a way to reuse previously downloaded cartoon
+    files even when a fresh notebook run does not have enough information to
+    re-resolve metadata from GlyLookup or Glymage.
+    """
+    asset_dir = Path(asset_dir)
+    normalized_suffixes = []
+    for suffix in (image_format, "svg", "png", "jpg", "jpeg"):
+        normalized_suffix = str(suffix).lower().lstrip(".")
+        if normalized_suffix and normalized_suffix not in normalized_suffixes:
+            normalized_suffixes.append(normalized_suffix)
+
+    candidate_stems = []
+    if accession:
+        candidate_stems.append(str(accession).strip())
+    candidate_stems.append(f"sequence_{hashlib.sha1(sequence.encode('utf-8')).hexdigest()[:12]}")
+
+    candidate_paths: list[Path] = []
+    seen_paths: set[Path] = set()
+    for stem in candidate_stems:
+        if not stem:
+            continue
+        for suffix in normalized_suffixes:
+            candidate_path = asset_dir / f"{stem}.{suffix}"
+            if candidate_path not in seen_paths:
+                candidate_paths.append(candidate_path)
+                seen_paths.add(candidate_path)
+
+    return candidate_paths
+
+
 def _submit_task(
     base_url: str,
     task: dict[str, Any],
@@ -210,6 +248,7 @@ def build_cartoon_manifest(
     image_format: str = "svg",
     display: str = "compact",
     lookup_timeout: int = 60,
+    existing_manifest_df=None,
 ) -> "pd.DataFrame":
     """Build one metadata table for all unique sequences in the analysis."""
     import pandas as pd
@@ -222,18 +261,46 @@ def build_cartoon_manifest(
             unique_sequences.append(text)
             seen_sequences.add(text)
 
-    # Resolve each unique sequence once, then keep the results in a flat table that can
-    # be saved, inspected in the notebook, or converted back into a lookup dictionary.
-    manifest_rows = [
-        resolve_cartoon_metadata(
-            sequence=sequence,
-            developer_email=developer_email,
-            image_format=image_format,
-            display=display,
-            lookup_timeout=lookup_timeout,
+    existing_lookup: dict[str, dict[str, Any]] = {}
+    if existing_manifest_df is not None:
+        existing_df = pd.DataFrame(existing_manifest_df).copy()
+        if "sequence" in existing_df.columns:
+            existing_df["sequence"] = existing_df["sequence"].fillna("").map(str)
+            existing_lookup = existing_df.set_index("sequence").to_dict(orient="index")
+
+    manifest_rows = []
+    for sequence in unique_sequences:
+        existing_row = existing_lookup.get(sequence)
+        if existing_row is not None:
+            existing_row = {key: "" if value is None else value for key, value in existing_row.items()}
+            local_image_path = str(existing_row.get("local_image_path", "") or "").strip()
+            # Prefer previously saved metadata when a local cartoon already exists.
+            if local_image_path and Path(local_image_path).exists():
+                manifest_rows.append(
+                    {
+                        "sequence": sequence,
+                        "accession": str(existing_row.get("accession", "") or ""),
+                        "glytoucan_url": str(existing_row.get("glytoucan_url", "") or ""),
+                        "image_url": str(existing_row.get("image_url", "") or ""),
+                        "lookup_status": str(existing_row.get("lookup_status", "") or "cached_existing"),
+                        "lookup_errors": str(existing_row.get("lookup_errors", "") or ""),
+                        "local_image_path": local_image_path,
+                        "local_image_status": str(existing_row.get("local_image_status", "") or "cached_existing"),
+                    }
+                )
+                continue
+
+        # Resolve each unique sequence once, then keep the results in a flat table that can
+        # be saved, inspected in the notebook, or converted back into a lookup dictionary.
+        manifest_rows.append(
+            resolve_cartoon_metadata(
+                sequence=sequence,
+                developer_email=developer_email,
+                image_format=image_format,
+                display=display,
+                lookup_timeout=lookup_timeout,
+            )
         )
-        for sequence in unique_sequences
-    ]
     return pd.DataFrame(manifest_rows)
 
 
@@ -261,13 +328,32 @@ def cache_cartoon_images(
         cached_df["local_image_status"] = ""
 
     for row_index, row in cached_df.iterrows():
+        existing_local_image_path = str(row.get("local_image_path", "") or "").strip()
+        if existing_local_image_path and Path(existing_local_image_path).exists():
+            cached_df.at[row_index, "local_image_path"] = existing_local_image_path
+            cached_df.at[row_index, "local_image_status"] = "cached_existing"
+            continue
+
+        accession = str(row.get("accession", "") or "").strip()
+        sequence = str(row.get("sequence", "") or "")
+        for candidate_path in _candidate_cartoon_asset_paths(
+            sequence=sequence,
+            accession=accession,
+            asset_dir=asset_dir,
+            image_format=image_format,
+        ):
+            if candidate_path.exists() and candidate_path.stat().st_size > 0:
+                cached_df.at[row_index, "local_image_path"] = str(candidate_path)
+                cached_df.at[row_index, "local_image_status"] = "cached_existing"
+                break
+        if str(cached_df.at[row_index, "local_image_path"]).strip():
+            continue
+
         image_url = str(row.get("image_url", "") or "").strip()
         if not image_url:
             cached_df.at[row_index, "local_image_status"] = "no_remote_image"
             continue
 
-        accession = str(row.get("accession", "") or "").strip()
-        sequence = str(row.get("sequence", "") or "")
         remote_suffix = Path(urlparse(image_url).path).suffix.lstrip(".")
         asset_name = _cartoon_asset_filename(
             sequence=sequence,

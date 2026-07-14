@@ -1385,6 +1385,7 @@ def save_scaleup_similarity_outputs(
     specific_summary_path = output_path / "specific_vs_all_distribution_summary.csv"
     threshold_cloud_path = output_path / "specific_vs_all_threshold_clouds.csv"
     threshold_summary_path = output_path / "specific_vs_all_threshold_summary.csv"
+    cartoon_manifest_path = output_path / "scaleup_cartoon_manifest.csv"
     config_path = output_path / "similarity_scaleup_config.json"
     html_dir = output_path / "html"
     histogram_dir = output_path / "histograms"
@@ -1423,6 +1424,11 @@ def save_scaleup_similarity_outputs(
         neighbor_limit=html_neighbor_limit,
         cloud_limit=html_cloud_limit,
     )
+    existing_cartoon_manifest_df = None
+    if cartoon_manifest_path.exists():
+        import pandas as pd
+
+        existing_cartoon_manifest_df = pd.read_csv(cartoon_manifest_path)
     # Build cartoons only for sequences that will actually be shown in HTML.
     cartoon_manifest_df = build_cartoon_manifest(
         sequences=html_sequences,
@@ -1430,6 +1436,7 @@ def save_scaleup_similarity_outputs(
         image_format=cartoon_image_format,
         display="compact",
         lookup_timeout=lookup_timeout,
+        existing_manifest_df=existing_cartoon_manifest_df,
     )
     cartoon_manifest_df = cache_cartoon_images(
         cartoon_manifest_df=cartoon_manifest_df,
@@ -1437,7 +1444,6 @@ def save_scaleup_similarity_outputs(
         image_format=cartoon_image_format,
         download_timeout=lookup_timeout,
     )
-    cartoon_manifest_path = output_path / "scaleup_cartoon_manifest.csv"
     cartoon_manifest_df.to_csv(cartoon_manifest_path, index=False)
     cartoon_lookup = cartoon_lookup_from_manifest(cartoon_manifest_df)
 
