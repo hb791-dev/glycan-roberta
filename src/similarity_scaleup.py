@@ -640,6 +640,46 @@ def attach_pca_to_scaleup_index_html(
     return index_html_path
 
 
+def attach_pca_to_specific_html(
+    query_html_path,
+    image_path,
+    focus_accession: str,
+    threshold: float,
+) -> Path:
+    """Insert one embedded PCA section into one accession-specific HTML report.
+
+    The PCA belongs with the accession whose cloud is being highlighted. This
+    helper embeds the saved image as a data URI so the HTML stays portable even
+    if the surrounding files are moved or opened directly from disk.
+    """
+    query_html_path = Path(query_html_path)
+    html = query_html_path.read_text(encoding="utf-8")
+
+    start_marker = "<!-- PCA_SECTION_START -->"
+    end_marker = "<!-- PCA_SECTION_END -->"
+    if start_marker in html and end_marker in html:
+        start_index = html.index(start_marker)
+        end_index = html.index(end_marker) + len(end_marker)
+        html = html[:start_index] + html[end_index:]
+
+    image_data_uri = _image_path_to_data_uri(image_path)
+    pca_html = (
+        "\n  <!-- PCA_SECTION_START -->\n"
+        "  <div class='analysis-card'>"
+        "<h2>PCA Embedding View</h2>"
+        f"<p class='section-note'>This PCA uses the active threshold <strong>{threshold:.2f}</strong> "
+        f"and highlights the cloud for <strong>{escape(str(focus_accession))}</strong>. "
+        "It is a simple embedding-space view to support the ranked neighbors and "
+        "threshold-cloud results, not to replace them.</p>"
+        f"<img src='{escape(image_data_uri, quote=True)}' "
+        f"alt='PCA embedding view for {escape(str(focus_accession))} at threshold {threshold:.2f}'>"
+        "</div>\n  <!-- PCA_SECTION_END -->\n"
+    )
+    html = html.replace("</body>", pca_html + "</body>")
+    query_html_path.write_text(html, encoding="utf-8")
+    return query_html_path
+
+
 def build_focus_cloud_membership(
     threshold_cloud_df,
     accession: str,
@@ -714,8 +754,8 @@ def save_scaleup_pca_outputs(
     This helper treats PCA as a supporting report artifact built from the
     already-computed similarity embeddings. It saves one image, one full
     coordinate table, one selected-glycan coordinate table, and one or more
-    focus-specific PCA images. It can also patch the top-level HTML report so
-    those PCA views travel with the rest of the results.
+    focus-specific PCA images. It can also patch the accession-specific HTML
+    reports so those PCA views travel with the rest of the results.
     """
     import matplotlib.pyplot as plt
     import numpy as np
@@ -784,7 +824,7 @@ def save_scaleup_pca_outputs(
     focus_cloud_dfs: dict[str, "pd.DataFrame"] = {}
     background_counts: dict[str, int] = {}
     focus_cloud_sizes: dict[str, int] = {}
-    pca_panels: list[dict] = []
+    pca_html_paths: dict[str, Path] = {}
 
     for focus_accession in normalized_focus_accessions:
         focus_cloud_df, focus_cloud_accessions = build_focus_cloud_membership(
@@ -865,25 +905,25 @@ def save_scaleup_pca_outputs(
         plt.close(fig)
 
         pca_image_paths[focus_accession] = pca_image_path
-        pca_panels.append(
-            {
-                "image_filename": pca_image_path.name,
-                "focus_accession": focus_accession,
-                "threshold": float(threshold),
-            }
-        )
-
     if include_in_html:
-        attach_pca_to_scaleup_index_html(
-            index_html_path=results_bundle["saved_paths"]["index_html_path"],
-            pca_panels=pca_panels,
-        )
+        query_html_paths = results_bundle["saved_paths"].get("query_html_paths", {})
+        for focus_accession, pca_image_path in pca_image_paths.items():
+            query_html_path = query_html_paths.get(focus_accession)
+            if query_html_path is None:
+                continue
+            pca_html_paths[focus_accession] = attach_pca_to_specific_html(
+                query_html_path=query_html_path,
+                image_path=pca_image_path,
+                focus_accession=focus_accession,
+                threshold=float(threshold),
+            )
 
     primary_focus_accession = normalized_focus_accessions[0]
     primary_pca_image_path = pca_image_paths[primary_focus_accession]
     return {
         "pca_image_path": primary_pca_image_path,
         "pca_image_paths": pca_image_paths,
+        "pca_html_paths": pca_html_paths,
         "pca_coordinates_path": pca_coordinates_path,
         "pca_selected_path": pca_selected_path,
         "selected_coordinates_df": selected_coordinates_df,

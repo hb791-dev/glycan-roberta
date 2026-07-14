@@ -25,6 +25,7 @@ from src.similarity_core import (
     validate_similarity_inputs,
 )
 from src.similarity_scaleup import (
+    attach_pca_to_specific_html,
     _build_matrix_labels,
     _clean_similarity_dataframe,
     _collect_scaleup_html_sequences,
