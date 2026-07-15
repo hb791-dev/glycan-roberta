@@ -57,8 +57,12 @@ glycan-roberta/
 │   ├── 04_roberta_pretraining.ipynb
 │   ├── 05_validation_diagnostics.ipynb
 │   ├── 06_test_set_evaluation.ipynb
+│   ├── 06b_rarity_analysis.ipynb
 │   ├── 07_similarity_analysis.ipynb
 │   └── 08_similarity_scaleup.ipynb
+├── public_reports/
+│   ├── README.md
+│   └── similarity_scaleup_demo/
 ├── src/
 │   ├── glycan_cartoons.py
 │   ├── similarity.py
@@ -252,6 +256,18 @@ Notes:
 - qualitative probes are tokenizer-specific because token boundaries differ
   across tokenizers
 
+### `06b_rarity_analysis.ipynb`
+
+Purpose:
+- inspect token-frequency behavior in the training data
+- summarize which tokens are common versus rare
+- support interpretation of why `macro` and `weighted` metrics can differ
+
+Main outputs:
+- token-frequency summary tables
+- rare-token diagnostic tables
+- rarity-oriented distribution plots
+
 ### `07_similarity_analysis.ipynb`
 
 Purpose:
@@ -314,6 +330,8 @@ Main outputs:
 - `histograms/`
 - `html/index.html`
 - `html/<accession>_specific_vs_all.html`
+- PCA report images and coordinate tables
+- clean public HTML export folder in Drive
 
 Notes:
 - this notebook uses the real held-out `test.txt` split in Drive and assigns
@@ -324,8 +342,28 @@ Notes:
   they may be external query glycans rather than members of the held-out split
 - the reusable mechanics live in `src/similarity.py`
 - the notebook saves outputs under `results/similarity_scaleup/`
-- the HTML reports are standalone and meant to be double-clicked locally after
-  the notebook run finishes
+- the notebook can also prepare a clean browser-facing export in Drive that is
+  intended to be copied into `public_reports/similarity_scaleup_demo/` before
+  pushing to GitHub
+
+## Public HTML Sharing Workflow
+
+Notebook `08_similarity_scaleup.ipynb` now includes a final export step for
+preparing a small static-report folder that is easier to share publicly than
+the full notebook output tree.
+
+Recommended flow:
+
+1. Run notebook 8 in Colab.
+2. Run the final public-export cell.
+3. Review the clean export folder in Google Drive.
+4. Copy the reviewed export into `public_reports/similarity_scaleup_demo/` in
+   this repository.
+5. Commit only that report folder.
+6. Push to GitHub and open the printed `raw.githack.com` URL.
+
+This keeps the public report path explicit and avoids mixing browser-facing HTML
+with the larger Drive-only artifact tree.
 
 ## Tokenizer Settings In This Workflow
 
