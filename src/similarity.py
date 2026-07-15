@@ -38,6 +38,7 @@ from src.similarity_scaleup import (
     build_similarity_distribution_summary,
     build_threshold_cloud_table,
     compare_queries_to_corpus,
+    export_public_scaleup_html,
     plot_similarity_distribution_histogram,
     render_scaleup_index_html,
     render_specific_vs_all_html,
