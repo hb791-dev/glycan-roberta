@@ -1009,6 +1009,7 @@ def render_specific_vs_all_html(
     cartoon_lookup: dict[str, dict[str, str]],
     output_path,
     output_name: str,
+    output_subtitle: str | None = None,
     histogram_image_path: str | None = None,
     neighbor_limit: int = 50,
     cloud_display_limit: int = 100,
@@ -1107,7 +1108,7 @@ def render_specific_vs_all_html(
     if histogram_image_path:
         histogram_html = (
             "<div class='analysis-card'>"
-            "<h2>Specific-vs-All Similarity Distribution</h2>"
+            "<h2>Specific-vs-All Similarity</h2>"
             f"<img src='{escape(histogram_image_path, quote=True)}' alt='Similarity histogram for {escape(query_accession)}'>"
             "</div>"
         )
@@ -1224,6 +1225,7 @@ def render_specific_vs_all_html(
 </head>
 <body>
   <h1>{escape(output_name)} - {escape(query_accession)}</h1>
+  {f"<p>{escape(output_subtitle)}</p>" if output_subtitle else ""}
   <p><a href="index.html">Back to summary report</a></p>
   <div class="query-panel">
     <h2>Selected Glycan</h2>
@@ -1272,6 +1274,7 @@ def render_scaleup_index_html(
     output_name: str,
     all_vs_all_summary_row: dict,
     cartoon_lookup: dict[str, dict[str, str]],
+    output_subtitle: str | None = None,
     all_vs_all_histogram_path: str | None = None,
 ) -> Path:
     """Render one top-level HTML index for the scale-up similarity analysis."""
@@ -1309,7 +1312,7 @@ def render_scaleup_index_html(
     if all_vs_all_histogram_path:
         all_vs_all_histogram_html = (
             "<div class='analysis-card'>"
-            "<h2>All-vs-All Background Distribution</h2>"
+            "<h2>All-vs-All Similarity</h2>"
             f"<img src='{escape(all_vs_all_histogram_path, quote=True)}' alt='All-vs-all similarity histogram'>"
             "</div>"
         )
@@ -1335,7 +1338,7 @@ def render_scaleup_index_html(
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>{escape(output_name)} - Similarity Scale-Up Index</title>
+  <title>{escape(output_name)}</title>
   <style>
     body {{
       font-family: Arial, sans-serif;
@@ -1410,8 +1413,8 @@ def render_scaleup_index_html(
   </style>
 </head>
 <body>
-  <h1>{escape(output_name)} - Similarity Scale-Up Index</h1>
-  <p>This report is the test-set scale-up companion to the smaller manual variant notebook.</p>
+  <h1>{escape(output_name)}</h1>
+  {f"<p>{escape(output_subtitle)}</p>" if output_subtitle else ""}
   {all_vs_all_histogram_html}
   <div class="analysis-card">
     <h2>All-vs-All Summary</h2>
@@ -1688,6 +1691,7 @@ def save_scaleup_similarity_outputs(
     output_dir,
     output_name: str,
     config_payload: dict,
+    output_subtitle: str | None = None,
     developer_email: str | None = None,
     cartoon_image_format: str = "svg",
     cartoon_display_mode: str = "compact",
@@ -1735,7 +1739,7 @@ def save_scaleup_similarity_outputs(
     all_vs_all_histogram_path = plot_similarity_distribution_histogram(
         all_vs_all_unique_pair_scores,
         histogram_dir / "all_vs_all_similarity_histogram.png",
-        f"{output_name} all-vs-all similarity distribution",
+        "All-vs-All Similarity",
     )
     all_vs_all_histogram_data_uri = _image_path_to_data_uri(all_vs_all_histogram_path)
 
@@ -1826,7 +1830,7 @@ def save_scaleup_similarity_outputs(
         query_histogram_paths[query_accession] = plot_similarity_distribution_histogram(
             non_self_scores,
             histogram_dir / f"{query_accession}_specific_vs_all_histogram.png",
-            f"{output_name} {query_accession} specific-vs-all similarity distribution",
+            f"Specific-vs-All Similarity: {query_accession}",
         )
         query_histogram_data_uri = _image_path_to_data_uri(query_histogram_paths[query_accession])
         # Each selected glycan gets its own standalone HTML page so the report can
@@ -1840,6 +1844,7 @@ def save_scaleup_similarity_outputs(
             cartoon_lookup=cartoon_lookup,
             output_path=html_dir / f"{query_accession}_specific_vs_all.html",
             output_name=output_name,
+            output_subtitle=output_subtitle,
             histogram_image_path=query_histogram_data_uri,
             neighbor_limit=html_neighbor_limit,
             cloud_display_limit=html_cloud_limit,
@@ -1852,6 +1857,7 @@ def save_scaleup_similarity_outputs(
         query_html_paths=query_html_paths,
         output_path=html_dir / "index.html",
         output_name=output_name,
+        output_subtitle=output_subtitle,
         all_vs_all_summary_row=all_vs_all_summary_df.iloc[0].to_dict(),
         cartoon_lookup=cartoon_lookup,
         all_vs_all_histogram_path=all_vs_all_histogram_data_uri,
@@ -1887,6 +1893,7 @@ def run_scaleup_similarity_analysis(
     output_dir,
     output_name: str,
     developer_email: str | None = None,
+    output_subtitle: str | None = None,
     accession_col: str = "accession",
     sequence_col: str = "sequence",
     thresholds: Sequence[float] = (0.95, 0.90, 0.85, 0.80),
@@ -1971,6 +1978,8 @@ def run_scaleup_similarity_analysis(
 
     config_payload = {
         "analysis_type": "similarity_scaleup",
+        "output_name": output_name,
+        "output_subtitle": output_subtitle or "",
         "model_dir": str(model_dir) if model_dir is not None else "",
         "output_dir": str(output_dir),
         "accession_col": accession_col,
@@ -2003,6 +2012,7 @@ def run_scaleup_similarity_analysis(
         threshold_summary_df=threshold_summary_df,
         output_dir=output_dir,
         output_name=output_name,
+        output_subtitle=output_subtitle,
         config_payload=config_payload,
         developer_email=developer_email,
         cartoon_image_format=cartoon_image_format,

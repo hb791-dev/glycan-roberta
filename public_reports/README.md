@@ -11,9 +11,10 @@ The intended workflow is:
 4. Copy the final shareable folder into this directory.
 5. Commit only the report folder you want to publish.
 
-For the notebook 8 similarity scale-up reports, the expected repo destination is:
+For notebook 8 similarity scale-up reports, the expected repo destination is
+run-specific, for example:
 
-- `public_reports/similarity_scaleup_demo/`
+- `public_reports/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/live_extended/`
 
 That folder is meant for browser-facing HTML only, not full notebook output
 trees, Drive-only artifacts, or intermediate CSV/debug files unless you

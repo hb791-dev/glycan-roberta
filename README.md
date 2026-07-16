@@ -62,7 +62,9 @@ glycan-roberta/
 │   └── 08_similarity_scaleup.ipynb
 ├── public_reports/
 │   ├── README.md
-│   └── similarity_scaleup_demo/
+│   └── <tokenizer_family>/
+│       └── <experiment_name>/
+│           └── <run_label>/
 ├── src/
 │   ├── glycan_cartoons.py
 │   ├── similarity.py
@@ -343,8 +345,9 @@ Notes:
 - the reusable mechanics live in `src/similarity.py`
 - the notebook saves outputs under `results/similarity_scaleup/`
 - the notebook can also prepare a clean browser-facing export in Drive that is
-  intended to be copied into `public_reports/similarity_scaleup_demo/` before
-  pushing to GitHub
+  intended to be copied into a run-specific folder such as
+  `public_reports/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/live_extended/`
+  before pushing to GitHub
 
 ## Public HTML Sharing Workflow
 
@@ -357,7 +360,7 @@ Recommended flow:
 1. Run notebook 8 in Colab.
 2. Run the final public-export cell.
 3. Review the clean export folder in Google Drive.
-4. Copy the reviewed export into `public_reports/similarity_scaleup_demo/` in
+4. Copy the reviewed export into the run-specific `public_reports/...` folder in
    this repository.
 5. Commit only that report folder.
 6. Push to GitHub and open the printed `raw.githack.com` URL.
