@@ -59,13 +59,15 @@ glycan-roberta/
 │   ├── 06_test_set_evaluation.ipynb
 │   ├── 06b_rarity_analysis.ipynb
 │   ├── 07_similarity_analysis.ipynb
-│   └── 08_similarity_scaleup.ipynb
+│   ├── 08_similarity_scaleup.ipynb
+│   └── 09_classification_dataset_prep.ipynb
 ├── public_reports/
 │   ├── README.md
 │   └── <tokenizer_family>/
 │       └── <experiment_name>/
 │           └── <run_label>/
 ├── src/
+│   ├── classification_prep.py
 │   ├── glycan_cartoons.py
 │   ├── similarity.py
 │   ├── similarity_core.py
@@ -85,7 +87,9 @@ glycan-roberta/
 MyDrive/ProjectRoot/
 ├── data/
 │   ├── raw/
-│   │   └── raw_glycans_dataset_no_aldi.txt
+│   │   ├── raw_glycans_dataset_no_aldi.txt
+│   │   ├── accession_reference_corpus.csv
+│   │   └── classification.tsv
 │   └── splits/
 │       ├── train.txt
 │       ├── val.txt
@@ -112,7 +116,8 @@ MyDrive/ProjectRoot/
 │   ├── validation/
 │   ├── test_evaluation/
 │   ├── similarity/
-│   └── similarity_scaleup/
+│   ├── similarity_scaleup/
+│   └── classification_prep/
 └── registry/
     └── run_index.csv
 ```
@@ -348,6 +353,41 @@ Notes:
   intended to be copied into a run-specific folder such as
   `public_reports/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/live_extended/`
   before pushing to GitHub
+
+### `09_classification_dataset_prep.ipynb`
+
+Purpose:
+- build the labeled dataset for the downstream glycan classification task
+- join the accession-aware compact-IUPAC corpus to the professor's
+  `classification.tsv` file
+- keep only `Source == GlycoMotif` and `Level == GlycanSubtype` labels
+- reuse the existing train, validation, and test split assignment by exact
+  sequence match
+- save clean CSV outputs for the later multi-label classification notebook
+
+Main outputs:
+- `labeled_glycans.csv`
+- `labeled_glycans_with_split.csv`
+- `train_classification.csv`
+- `val_classification.csv`
+- `test_classification.csv`
+- `label_vocabulary.csv`
+- `dataset_summary.csv`
+- `split_summary.csv`
+- `label_coverage_summary.csv`
+- `missing_train_labels.csv`
+- `classification_prep_summary.json`
+
+Notes:
+- the reusable dataset-prep logic lives in `src/classification_prep.py`
+- the notebook expects an accession-aware raw file in Drive because the
+  subtype label source is keyed by GlyTouCan accession rather than by sequence
+  text alone
+- split assignment is done by exact sequence match so this classification
+  branch stays aligned with the existing `train.txt`, `val.txt`, and `test.txt`
+  files used elsewhere in the project
+- this notebook is the handoff point between raw labeled data and the later
+  multi-label fine-tuning workflow
 
 ## Public HTML Sharing Workflow
 
