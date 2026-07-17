@@ -60,7 +60,8 @@ glycan-roberta/
 │   ├── 06b_rarity_analysis.ipynb
 │   ├── 07_similarity_analysis.ipynb
 │   ├── 08_similarity_scaleup.ipynb
-│   └── 09_classification_dataset_prep.ipynb
+│   ├── 09_classification_dataset_prep.ipynb
+│   └── 10_classification_finetuning.ipynb
 ├── public_reports/
 │   ├── README.md
 │   └── <tokenizer_family>/
@@ -68,6 +69,7 @@ glycan-roberta/
 │           └── <run_label>/
 ├── src/
 │   ├── classification_prep.py
+│   ├── classification_training.py
 │   ├── glycan_cartoons.py
 │   ├── similarity.py
 │   ├── similarity_core.py
@@ -108,6 +110,7 @@ MyDrive/ProjectRoot/
 │   └── manual/
 ├── checkpoints/
 │   ├── byte_bpe/
+│   ├── classification/
 │   ├── glyberta/
 │   ├── hybrid_char_bpe/
 │   └── manual/
@@ -115,6 +118,7 @@ MyDrive/ProjectRoot/
 │   ├── exploration/
 │   ├── validation/
 │   ├── test_evaluation/
+│   ├── classification_finetuning/
 │   ├── similarity/
 │   ├── similarity_scaleup/
 │   └── classification_prep/
@@ -391,6 +395,38 @@ Notes:
   files used elsewhere in the project
 - this notebook is the handoff point between raw labeled data and the later
   multi-label fine-tuning workflow
+
+### `10_classification_finetuning.ipynb`
+
+Purpose:
+- fine-tune one sequence classifier from one saved pretrained MLM checkpoint
+- load the prepared train and validation classification tables from notebook 09
+- train `RobertaForSequenceClassification` for multi-label subtype prediction
+- review training and validation loss
+- scan a few global validation thresholds before final test-set evaluation
+
+Main outputs:
+- classifier checkpoints under
+  `checkpoints/classification/<tokenizer_family>/<experiment_name>/<classifier_run_label>/`
+- `training_config.json`
+- `trainer_state.json`
+- `loss_history.csv`
+- `loss_curves.png`
+- `validation_metrics.csv`
+- `validation_threshold_scan.csv`
+- `validation_prediction_table.csv`
+- `best_threshold.json`
+- `label_vocabulary_snapshot.csv`
+
+Notes:
+- the reusable classifier-training logic lives in `src/classification_training.py`
+- this notebook keeps classifier outputs nested under the tokenizer family and
+  pretrained experiment name so downstream comparisons stay aligned with the
+  original four-tokenizer workflow
+- threshold selection is done on the validation split only; the test split is
+  reserved for the later final evaluation notebook
+- the saved `best_threshold.json` file is intended to be reused unchanged in
+  the test-set evaluation step
 
 ## Public HTML Sharing Workflow
 
