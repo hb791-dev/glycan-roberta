@@ -183,6 +183,52 @@ def _build_roc_curve(binary_true, scores):
     return fpr, tpr, float(roc_auc)
 
 
+def compute_exact_match_flags(true_labels, predicted_labels) -> np.ndarray:
+    """Mark each glycan as correct only when the whole label set matches."""
+    true_array = np.asarray(true_labels, dtype=int)
+    predicted_array = np.asarray(predicted_labels, dtype=int)
+    return (true_array == predicted_array).all(axis=1).astype(int)
+
+
+def compute_exact_match_confidence_scores(
+    predicted_probabilities,
+    threshold: float,
+) -> np.ndarray:
+    """Score each glycan by its least-confident label decision margin."""
+    probability_array = np.asarray(predicted_probabilities, dtype=float)
+    decision_margins = np.abs(probability_array - float(threshold))
+    return decision_margins.min(axis=1)
+
+
+def build_exact_match_curve_summary(
+    exact_match_flags,
+    exact_match_confidence_scores,
+    threshold: float,
+) -> "pd.DataFrame":
+    """Summarize glycan-level exact-match ROC-AUC and average precision."""
+    binary_true = np.asarray(exact_match_flags, dtype=int)
+    confidence_scores = np.asarray(exact_match_confidence_scores, dtype=float)
+
+    _, _, roc_auc = _build_roc_curve(binary_true, confidence_scores)
+    _, _, average_precision = _build_monotonic_pr_curve(binary_true, confidence_scores)
+
+    return pd.DataFrame(
+        [
+            {
+                "target_name": "exact_match",
+                "score_name": "min_label_margin_from_threshold",
+                "threshold": float(threshold),
+                "num_glycans": int(len(binary_true)),
+                "num_exact_matches": int(binary_true.sum()),
+                "num_non_exact_matches": int(len(binary_true) - binary_true.sum()),
+                "exact_match_accuracy": float(binary_true.mean()) if len(binary_true) else float("nan"),
+                "roc_auc": float(roc_auc),
+                "average_precision": float(average_precision),
+            }
+        ]
+    )
+
+
 def compute_per_label_metrics(
     true_labels,
     predicted_labels,
@@ -399,6 +445,55 @@ def plot_selected_monotonic_pr_curves(
     return pd.DataFrame(rows).sort_values(["support", "label_name"], ascending=[False, True]).reset_index(drop=True)
 
 
+def plot_exact_match_roc_curve(
+    exact_match_flags,
+    exact_match_confidence_scores,
+    save_path: str | Path | None = None,
+) -> None:
+    """Plot a glycan-level ROC curve for full exact-match correctness."""
+    binary_true = np.asarray(exact_match_flags, dtype=int)
+    confidence_scores = np.asarray(exact_match_confidence_scores, dtype=float)
+    fpr, tpr, _ = _build_roc_curve(binary_true, confidence_scores)
+
+    plt.figure(figsize=(7, 5))
+    plt.plot(fpr, tpr, label="Exact match")
+    plt.plot([0, 1], [0, 1], linestyle="--", color="black")
+    plt.xlabel("False positive rate")
+    plt.ylabel("True positive rate")
+    plt.title("Exact-match ROC curve")
+    plt.legend(loc="lower right")
+    plt.grid(alpha=0.3)
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+
+def plot_exact_match_monotonic_pr_curve(
+    exact_match_flags,
+    exact_match_confidence_scores,
+    save_path: str | Path | None = None,
+) -> None:
+    """Plot a monotonic PR curve for glycan-level exact-match correctness."""
+    binary_true = np.asarray(exact_match_flags, dtype=int)
+    confidence_scores = np.asarray(exact_match_confidence_scores, dtype=float)
+    recall, precision, _ = _build_monotonic_pr_curve(binary_true, confidence_scores)
+
+    plt.figure(figsize=(7, 5))
+    plt.plot(recall, precision, label="Exact match")
+    plt.xlabel("Recall")
+    plt.ylabel("Interpolated precision")
+    plt.title("Exact-match monotonic PR curve")
+    plt.legend(loc="lower left")
+    plt.grid(alpha=0.3)
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+
 def build_classification_evaluation_output_paths(
     project_root: str | Path,
     tokenizer_family: str,
@@ -426,8 +521,11 @@ def build_classification_evaluation_output_paths(
         "roc_summary_path": str(results_dir / "roc_auc_per_label.csv"),
         "pr_summary_path": str(results_dir / "average_precision_per_label.csv"),
         "curve_aggregate_summary_path": str(results_dir / "curve_aggregate_summary.csv"),
+        "exact_match_summary_path": str(results_dir / "exact_match_summary.csv"),
         "top10_roc_summary_path": str(results_dir / "top10_supported_roc_summary.csv"),
         "top10_pr_summary_path": str(results_dir / "top10_supported_pr_summary.csv"),
+        "exact_match_roc_plot_path": str(results_dir / "exact_match_roc_curve.png"),
+        "exact_match_pr_plot_path": str(results_dir / "exact_match_pr_curve.png"),
         "top10_roc_plot_path": str(results_dir / "top10_supported_roc_curves.png"),
         "top10_pr_plot_path": str(results_dir / "top10_supported_pr_curves.png"),
         "test_prediction_table_path": str(results_dir / "test_prediction_table.csv"),
@@ -440,6 +538,7 @@ def save_classification_evaluation_outputs(
     roc_summary_df: "pd.DataFrame",
     pr_summary_df: "pd.DataFrame",
     curve_aggregate_summary_df: "pd.DataFrame",
+    exact_match_summary_df: "pd.DataFrame",
     top10_roc_summary_df: "pd.DataFrame",
     top10_pr_summary_df: "pd.DataFrame",
     test_prediction_table_df: "pd.DataFrame",
@@ -455,6 +554,7 @@ def save_classification_evaluation_outputs(
     roc_summary_df.to_csv(output_paths["roc_summary_path"], index=False)
     pr_summary_df.to_csv(output_paths["pr_summary_path"], index=False)
     curve_aggregate_summary_df.to_csv(output_paths["curve_aggregate_summary_path"], index=False)
+    exact_match_summary_df.to_csv(output_paths["exact_match_summary_path"], index=False)
     top10_roc_summary_df.to_csv(output_paths["top10_roc_summary_path"], index=False)
     top10_pr_summary_df.to_csv(output_paths["top10_pr_summary_path"], index=False)
     test_prediction_table_df.to_csv(output_paths["test_prediction_table_path"], index=False)

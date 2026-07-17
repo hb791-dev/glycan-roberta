@@ -445,6 +445,7 @@ Purpose:
 - compute final multi-label metrics on the held-out test set
 - save per-label ROC and PR summaries for all subtype labels
 - plot ROC and monotonic PR curves for the top supported labels
+- add one glycan-level exact-match ROC and monotonic PR view
 
 Main outputs:
 - `test_metrics.csv`
@@ -453,8 +454,11 @@ Main outputs:
 - `roc_auc_per_label.csv`
 - `average_precision_per_label.csv`
 - `curve_aggregate_summary.csv`
+- `exact_match_summary.csv`
 - `top10_supported_roc_summary.csv`
 - `top10_supported_pr_summary.csv`
+- `exact_match_roc_curve.png`
+- `exact_match_pr_curve.png`
 - `top10_supported_roc_curves.png`
 - `top10_supported_pr_curves.png`
 - `test_prediction_table.csv`
@@ -467,6 +471,9 @@ Notes:
   threshold-selection decisions
 - all labels are evaluated and saved in tables, but the default first-pass
   plots show only the top 10 labels by support so the figures stay readable
+- the exact-match view treats each glycan as fully correct or not fully
+  correct, then scores confidence using the smallest label-decision margin
+  from the saved threshold
 - the PR plots use monotonic precision envelopes for the same general reason as
   the earlier MLM evaluation notebook: the saved curves are easier to interpret
   visually
