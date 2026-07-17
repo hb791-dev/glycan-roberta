@@ -61,7 +61,8 @@ glycan-roberta/
 │   ├── 07_similarity_analysis.ipynb
 │   ├── 08_similarity_scaleup.ipynb
 │   ├── 09_classification_dataset_prep.ipynb
-│   └── 10_classification_finetuning.ipynb
+│   ├── 10_classification_finetuning.ipynb
+│   └── 11_classification_evaluation.ipynb
 ├── public_reports/
 │   ├── README.md
 │   └── <tokenizer_family>/
@@ -69,6 +70,7 @@ glycan-roberta/
 │           └── <run_label>/
 ├── src/
 │   ├── classification_prep.py
+│   ├── classification_evaluation.py
 │   ├── classification_training.py
 │   ├── glycan_cartoons.py
 │   ├── similarity.py
@@ -119,6 +121,7 @@ MyDrive/ProjectRoot/
 │   ├── validation/
 │   ├── test_evaluation/
 │   ├── classification_finetuning/
+│   ├── classification_evaluation/
 │   ├── similarity/
 │   ├── similarity_scaleup/
 │   └── classification_prep/
@@ -433,6 +436,40 @@ Notes:
   reserved for the later final evaluation notebook
 - the saved `best_threshold.json` file is intended to be reused unchanged in
   the test-set evaluation step
+
+### `11_classification_evaluation.ipynb`
+
+Purpose:
+- run the final locked test-set evaluation for one trained glycan classifier
+- load the saved threshold selected on the validation split in notebook 10
+- compute final multi-label metrics on the held-out test set
+- save per-label ROC and PR summaries for all subtype labels
+- plot ROC and monotonic PR curves for the top supported labels
+
+Main outputs:
+- `test_metrics.csv`
+- `test_metrics.json`
+- `per_label_metrics.csv`
+- `roc_auc_per_label.csv`
+- `average_precision_per_label.csv`
+- `curve_aggregate_summary.csv`
+- `top10_supported_roc_summary.csv`
+- `top10_supported_pr_summary.csv`
+- `top10_supported_roc_curves.png`
+- `top10_supported_pr_curves.png`
+- `test_prediction_table.csv`
+- `evaluation_config.json`
+
+Notes:
+- the reusable evaluation logic lives in `src/classification_evaluation.py`
+- this notebook is the final reporting step for the classification branch and
+  is meant to keep the test split separate from the earlier training and
+  threshold-selection decisions
+- all labels are evaluated and saved in tables, but the default first-pass
+  plots show only the top 10 labels by support so the figures stay readable
+- the PR plots use monotonic precision envelopes for the same general reason as
+  the earlier MLM evaluation notebook: the saved curves are easier to interpret
+  visually
 
 ## Public HTML Sharing Workflow
 
