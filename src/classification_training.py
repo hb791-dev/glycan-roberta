@@ -26,7 +26,7 @@ import pandas as pd
 import torch
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from torch.utils.data import Dataset
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -360,19 +360,36 @@ def save_json(payload: dict[str, object], output_path: str | Path) -> None:
 def load_sequence_classification_model(
     pretrained_model_dir: str | Path,
     num_labels: int,
+    initialization_mode: str = "mlm_checkpoint",
     device: str | None = None,
 ):
-    """Load a multi-label sequence classifier initialized from the MLM checkpoint.
+    """Load a multi-label sequence classifier with a configurable initialization.
 
-    Hugging Face will reuse the encoder weights from the pretrained checkpoint
-    and initialize a fresh classification head with the requested number of
+    ``mlm_checkpoint`` reuses the encoder weights from the saved MLM checkpoint
+    and initializes a fresh classification head with the requested number of
     output labels.
+
+    ``random_init`` keeps the same architecture and tokenizer vocabulary but
+    starts the entire classifier from random weights using the saved config as
+    a template.
     """
-    model = AutoModelForSequenceClassification.from_pretrained(
-        str(pretrained_model_dir),
-        num_labels=int(num_labels),
-        problem_type="multi_label_classification",
-    )
+    initialization_mode = str(initialization_mode).strip().lower()
+
+    if initialization_mode == "mlm_checkpoint":
+        model = AutoModelForSequenceClassification.from_pretrained(
+            str(pretrained_model_dir),
+            num_labels=int(num_labels),
+            problem_type="multi_label_classification",
+        )
+    elif initialization_mode == "random_init":
+        config = AutoConfig.from_pretrained(str(pretrained_model_dir))
+        config.num_labels = int(num_labels)
+        config.problem_type = "multi_label_classification"
+        model = AutoModelForSequenceClassification.from_config(config)
+    else:
+        raise ValueError(
+            "initialization_mode must be either 'mlm_checkpoint' or 'random_init'."
+        )
 
     if device is not None:
         model = model.to(torch.device(device))

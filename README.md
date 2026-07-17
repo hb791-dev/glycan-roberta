@@ -402,7 +402,8 @@ Notes:
 ### `10_classification_finetuning.ipynb`
 
 Purpose:
-- fine-tune one sequence classifier from one saved pretrained MLM checkpoint
+- fine-tune one sequence classifier from either one saved pretrained MLM
+  checkpoint or a random-init baseline with the same tokenizer/config
 - load the prepared train and validation classification tables from notebook 09
 - train `RobertaForSequenceClassification` for multi-label subtype prediction
 - review training and validation loss
@@ -426,12 +427,18 @@ Notes:
 - this notebook keeps classifier outputs nested under the tokenizer family and
   pretrained experiment name so downstream comparisons stay aligned with the
   original four-tokenizer workflow
+- notebook 10 now has an `INITIALIZATION_MODE` toggle so the same training
+  pipeline can be used for either an MLM-initialized run or a random-init
+  baseline while keeping the tokenizer vocabulary fixed
 - when loading a saved `RobertaForMaskedLM` checkpoint into
   `RobertaForSequenceClassification`, Hugging Face will normally report
   `UNEXPECTED` `lm_head.*` weights and `MISSING` `classifier.*` weights; this
   is expected because the shared encoder is being reused, the MLM head is being
   dropped, and a fresh classifier head is being initialized for downstream
   training
+- when using the random-init baseline, the model weights start from scratch but
+  the tokenizer and architecture are still recovered from the saved checkpoint
+  folder so the comparison stays controlled
 - threshold selection is done on the validation split only; the test split is
   reserved for the later final evaluation notebook
 - the saved `best_threshold.json` file is intended to be reused unchanged in
