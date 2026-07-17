@@ -279,10 +279,16 @@ def build_label_vocabulary(
 
 
 def summarize_classification_dataset(
+    joined_df: "pd.DataFrame",
     labeled_with_split_df: "pd.DataFrame",
     label_vocabulary_df: "pd.DataFrame",
 ) -> dict[str, object]:
     """Build compact summary tables for notebook display and saved reports."""
+    _require_columns(
+        joined_df,
+        [ACCESSION_COLUMN, SEQUENCE_COLUMN, LABEL_COUNT_COLUMN, "has_labels"],
+        "joined_df",
+    )
     _require_columns(
         labeled_with_split_df,
         [ACCESSION_COLUMN, SEQUENCE_COLUMN, LABEL_COUNT_COLUMN, SPLIT_COLUMN, "matched_existing_split"],
@@ -296,7 +302,11 @@ def summarize_classification_dataset(
 
     dataset_summary_rows = [
         {
-            "metric": "total_accession_rows",
+            "metric": "total_accession_rows_before_label_filter",
+            "value": int(len(joined_df)),
+        },
+        {
+            "metric": "total_labeled_accession_rows_after_label_filter",
             "value": int(len(labeled_with_split_df)),
         },
         {
@@ -304,8 +314,8 @@ def summarize_classification_dataset(
             "value": int((labeled_with_split_df[LABEL_COUNT_COLUMN] > 0).sum()),
         },
         {
-            "metric": "rows_without_labels",
-            "value": int((labeled_with_split_df[LABEL_COUNT_COLUMN] == 0).sum()),
+            "metric": "rows_without_glycomotif_subtype_labels",
+            "value": int((joined_df["has_labels"] == False).sum()),
         },
         {
             "metric": "rows_matched_to_existing_split",
@@ -467,7 +477,7 @@ def run_classification_prep_pipeline(
     labeled_with_split_df = assign_splits_by_sequence(labeled_df, split_lookup)
 
     label_vocabulary_df = build_label_vocabulary(labeled_with_split_df)
-    summary_bundle = summarize_classification_dataset(labeled_with_split_df, label_vocabulary_df)
+    summary_bundle = summarize_classification_dataset(joined_df, labeled_with_split_df, label_vocabulary_df)
     output_paths = save_classification_prep_outputs(
         labeled_df=labeled_df,
         labeled_with_split_df=labeled_with_split_df,
