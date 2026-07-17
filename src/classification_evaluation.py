@@ -334,7 +334,9 @@ def plot_selected_roc_curves(
                 "auc": float(roc_auc),
             }
         )
-        plt.plot(fpr, tpr, label=f"{row.label_name} (AUC={roc_auc:.3f})")
+        # Keep the legend readable. The numeric AUC values are still saved in
+        # the companion CSV summary, so the plot legend only needs label names.
+        plt.plot(fpr, tpr, label=str(row.label_name))
 
     plt.plot([0, 1], [0, 1], linestyle="--", color="black")
     plt.xlabel("False positive rate")
@@ -379,7 +381,9 @@ def plot_selected_monotonic_pr_curves(
                 "average_precision": float(average_precision),
             }
         )
-        plt.plot(recall, precision, label=f"{row.label_name} (AP={average_precision:.3f})")
+        # As with ROC, keep the plot legend simple and leave the numeric
+        # average-precision values in the saved CSV summary table.
+        plt.plot(recall, precision, label=str(row.label_name))
 
     plt.xlabel("Recall")
     plt.ylabel("Interpolated precision")
@@ -454,4 +458,3 @@ def save_classification_evaluation_outputs(
     top10_roc_summary_df.to_csv(output_paths["top10_roc_summary_path"], index=False)
     top10_pr_summary_df.to_csv(output_paths["top10_pr_summary_path"], index=False)
     test_prediction_table_df.to_csv(output_paths["test_prediction_table_path"], index=False)
-
