@@ -451,6 +451,7 @@ Main outputs:
 - `test_metrics.csv`
 - `test_metrics.json`
 - `per_label_metrics.csv`
+- `support_weighted_error_summary.csv`
 - `roc_auc_per_label.csv`
 - `average_precision_per_label.csv`
 - `curve_aggregate_summary.csv`
@@ -471,6 +472,9 @@ Notes:
   threshold-selection decisions
 - all labels are evaluated and saved in tables, but the default first-pass
   plots show only the top 10 labels by support so the figures stay readable
+- the notebook also saves a support-aware weak-label table based on
+  `support * (1 - F1)` so labels with both meaningful support and weaker
+  performance are easier to spot
 - the exact-match view treats each glycan as fully correct or not fully
   correct, then scores confidence using the smallest label-decision margin
   from the saved threshold

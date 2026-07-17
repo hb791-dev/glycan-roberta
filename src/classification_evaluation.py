@@ -256,6 +256,27 @@ def compute_per_label_metrics(
     return per_label_df.sort_values(["support", "label_name"], ascending=[False, True]).reset_index(drop=True)
 
 
+def build_support_weighted_error_summary(
+    per_label_metrics_df: "pd.DataFrame",
+    min_support: int = 1,
+) -> "pd.DataFrame":
+    """Rank weaker labels while still accounting for how often they appear.
+
+    The main score here is support * (1 - F1). That keeps very tiny labels
+    from dominating the table just because they had one or two mistakes, while
+    still surfacing labels that have meaningful support and room to improve.
+    """
+    summary_df = per_label_metrics_df.copy()
+    summary_df = summary_df.loc[summary_df["support"] >= int(min_support)].copy()
+    summary_df["f1_error"] = 1.0 - summary_df["f1"]
+    summary_df["support_weighted_error"] = summary_df["support"] * summary_df["f1_error"]
+
+    return summary_df.sort_values(
+        ["support_weighted_error", "support", "label_name"],
+        ascending=[False, False, True],
+    ).reset_index(drop=True)
+
+
 def build_multilabel_roc_summary(
     true_labels,
     predicted_probabilities,
@@ -518,6 +539,7 @@ def build_classification_evaluation_output_paths(
         "test_metrics_csv_path": str(results_dir / "test_metrics.csv"),
         "test_metrics_json_path": str(results_dir / "test_metrics.json"),
         "per_label_metrics_path": str(results_dir / "per_label_metrics.csv"),
+        "support_weighted_error_summary_path": str(results_dir / "support_weighted_error_summary.csv"),
         "roc_summary_path": str(results_dir / "roc_auc_per_label.csv"),
         "pr_summary_path": str(results_dir / "average_precision_per_label.csv"),
         "curve_aggregate_summary_path": str(results_dir / "curve_aggregate_summary.csv"),
@@ -535,6 +557,7 @@ def build_classification_evaluation_output_paths(
 def save_classification_evaluation_outputs(
     test_metrics: dict[str, object],
     per_label_metrics_df: "pd.DataFrame",
+    support_weighted_error_summary_df: "pd.DataFrame",
     roc_summary_df: "pd.DataFrame",
     pr_summary_df: "pd.DataFrame",
     curve_aggregate_summary_df: "pd.DataFrame",
@@ -551,6 +574,7 @@ def save_classification_evaluation_outputs(
         encoding="utf-8",
     )
     per_label_metrics_df.to_csv(output_paths["per_label_metrics_path"], index=False)
+    support_weighted_error_summary_df.to_csv(output_paths["support_weighted_error_summary_path"], index=False)
     roc_summary_df.to_csv(output_paths["roc_summary_path"], index=False)
     pr_summary_df.to_csv(output_paths["pr_summary_path"], index=False)
     curve_aggregate_summary_df.to_csv(output_paths["curve_aggregate_summary_path"], index=False)
