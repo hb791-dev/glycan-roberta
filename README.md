@@ -423,6 +423,12 @@ Notes:
 - this notebook keeps classifier outputs nested under the tokenizer family and
   pretrained experiment name so downstream comparisons stay aligned with the
   original four-tokenizer workflow
+- when loading a saved `RobertaForMaskedLM` checkpoint into
+  `RobertaForSequenceClassification`, Hugging Face will normally report
+  `UNEXPECTED` `lm_head.*` weights and `MISSING` `classifier.*` weights; this
+  is expected because the shared encoder is being reused, the MLM head is being
+  dropped, and a fresh classifier head is being initialized for downstream
+  training
 - threshold selection is done on the validation split only; the test split is
   reserved for the later final evaluation notebook
 - the saved `best_threshold.json` file is intended to be reused unchanged in
