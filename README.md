@@ -355,6 +355,9 @@ Notes:
   directly inside the notebook together with their compact IUPAC sequences, and
   they may be external query glycans rather than members of the held-out split
 - the reusable mechanics live in `src/similarity.py`
+- notebook 8 can now load either a pretraining MLM checkpoint or a
+  classification-finetuned checkpoint, using a `CHECKPOINT_SOURCE` toggle plus
+  `CLASSIFIER_RUN_LABEL` when the classification checkpoint layout is used
 - the notebook saves outputs under `results/similarity_scaleup/`
 - the notebook can also prepare a clean browser-facing export in Drive that is
   intended to be copied into a run-specific folder such as

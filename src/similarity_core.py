@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
-from transformers import AutoModelForMaskedLM, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -36,10 +36,15 @@ def resolve_device(device: str | None = None) -> torch.device:
 
 
 def load_similarity_artifacts(model_dir: str, device: str | None = None):
-    """Load a saved tokenizer and MLM checkpoint for embedding comparisons."""
+    """Load a saved tokenizer and encoder-compatible checkpoint.
+
+    Similarity work only needs the shared encoder that produces token-level
+    hidden states. Loading with ``AutoModel`` keeps this path compatible with
+    both saved MLM checkpoints and saved classification checkpoints.
+    """
     runtime_device = resolve_device(device)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    model = AutoModelForMaskedLM.from_pretrained(model_dir).to(runtime_device)
+    model = AutoModel.from_pretrained(model_dir).to(runtime_device)
     model.eval()
     return tokenizer, model, runtime_device
 
@@ -47,13 +52,15 @@ def load_similarity_artifacts(model_dir: str, device: str | None = None):
 def _get_encoder(model):
     """Return the encoder that produces token embeddings.
 
-    We often save and reload a `RobertaForMaskedLM` checkpoint because that is
-    what the masked-language-model training loop uses. For similarity work we do
-    not want the MLM prediction head on top; we want the underlying encoder that
-    outputs one hidden-state vector per token.
+    Some checkpoints are reloaded as task-specific wrappers and some are loaded
+    directly as the base encoder. In both cases, similarity work only needs the
+    object that exposes ``last_hidden_state`` for token-level embeddings.
     """
-    if hasattr(model, "base_model"):
+    if hasattr(model, "base_model") and model.base_model is not None:
         return model.base_model
+
+    if hasattr(model, "encoder") or hasattr(model, "embeddings"):
+        return model
 
     raise AttributeError("Model does not expose a base encoder for embedding extraction.")
 
