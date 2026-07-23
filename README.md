@@ -62,7 +62,8 @@ glycan-roberta/
 │   ├── 08_similarity_scaleup.ipynb
 │   ├── 09_classification_dataset_prep.ipynb
 │   ├── 10_classification_finetuning.ipynb
-│   └── 11_classification_evaluation.ipynb
+│   ├── 11_classification_evaluation.ipynb
+│   └── 12_glyberta_similarity_model_comparison.ipynb
 ├── public_reports/
 │   ├── README.md
 │   └── <tokenizer_family>/
@@ -75,6 +76,7 @@ glycan-roberta/
 │   ├── glycan_cartoons.py
 │   ├── similarity.py
 │   ├── similarity_core.py
+│   ├── similarity_model_comparison.py
 │   ├── similarity_variants.py
 │   ├── similarity_scaleup.py
 │   ├── test_evaluation.py
@@ -491,6 +493,37 @@ Notes:
 - the PR plots use monotonic precision envelopes for the same general reason as
   the earlier MLM evaluation notebook: the saved curves are easier to interpret
   visually
+
+### `12_glyberta_similarity_model_comparison.ipynb`
+
+Purpose:
+- compare the notebook-8 similarity-scaleup outputs for three `glyberta` model
+  states
+- focus on the professor's question about whether embeddings produce different
+  similarity distributions before and after classification fine-tuning
+- compare pretrained MLM embeddings, classifier embeddings from MLM init, and
+  classifier embeddings from random init
+- run as a no-GPU analysis step because it only reads saved CSV outputs
+
+Main outputs:
+- `similarity_model_comparison_config.json`
+- `similarity_model_comparison_manifest.json`
+- `all_vs_all_model_comparison.csv`
+- `specific_vs_all_model_comparison.csv`
+- `threshold_cloud_size_model_comparison.csv`
+- `top_neighbor_overlap_model_comparison.csv`
+- `threshold_cloud_overlap_model_comparison.csv`
+- `cloud_label_overlap_model_comparison.csv`
+- `all_vs_all_model_comparison.png`
+- `specific_vs_all_query_medians.png`
+- `threshold_cloud_size_model_comparison_<threshold>.png`
+
+Notes:
+- the reusable comparison logic lives in `src/similarity_model_comparison.py`
+- this notebook does not recompute embeddings; it expects notebook 8 to have
+  already produced matching `live_extended` similarity-scaleup folders
+- missing labels in cloud-label summaries are counted separately instead of
+  being treated as negative examples
 
 ## Public HTML Sharing Workflow
 
