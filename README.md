@@ -499,7 +499,7 @@ Notes:
 Purpose:
 - compare notebook-8 similarity-scaleup outputs across any set of model runs
   listed in `RUN_SPECS`
-- use the current `glyberta` comparison as the default example
+- use the current `manual` tokenizer comparison as the default example
 - focus on the professor's question about whether embeddings produce different
   similarity distributions before and after classification fine-tuning
 - compare pretrained MLM embeddings, classifier embeddings from MLM init, and
