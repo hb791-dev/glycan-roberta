@@ -518,6 +518,7 @@ Main outputs:
 - `threshold_cloud_overlap_model_comparison.csv`
 - `three_way_cloud_overlap_summary.csv`
 - `cloud_label_overlap_model_comparison.csv`
+- `classification_exact_match_summary.csv`
 - `html_neighbor_gallery_table.csv`
 - `all_vs_all_model_comparison.png`
 - `specific_vs_all_query_medians.png`
@@ -536,6 +537,9 @@ Notes:
   cell
 - by default, the HTML report embeds plots and cartoons directly into the HTML
   file so the report can be downloaded/shared as one standalone file
+- when classifier evaluation summaries from notebook 11 are available, the HTML
+  report header shows exact-match, macro F1, and weighted F1 for those
+  classifier runs
 - `similarity_model_comparison_index.html` is the model similarity comparison
   landing page and links to the full visual report, plots, tables, config,
   and manifest; `index.html` is also saved as a compatibility copy inside the

@@ -291,6 +291,9 @@ table {
 .table-scroll table {
   min-width: 760px;
 }
+.compact-table-wrap table {
+  min-width: 0;
+}
 th, td {
   border-bottom: 1px solid var(--line);
   padding: 8px 10px;
@@ -909,6 +912,49 @@ def build_cloud_label_overlap_summary(
     return pd.DataFrame(rows)
 
 
+def build_classification_exact_match_summary(
+    run_specs: list[dict[str, str | Path]],
+) -> "pd.DataFrame":
+    """Read notebook-11 classification summaries for runs that provide them."""
+    rows = []
+    for model_order, spec in enumerate(run_specs):
+        evaluation_dir = spec.get("classification_evaluation_dir")
+        test_metrics_path = spec.get("test_metrics_path")
+        exact_match_summary_path = spec.get("exact_match_summary_path")
+
+        if evaluation_dir is not None:
+            evaluation_path = Path(evaluation_dir)
+            test_metrics_path = test_metrics_path or evaluation_path / "test_metrics.csv"
+            exact_match_summary_path = exact_match_summary_path or evaluation_path / "exact_match_summary.csv"
+
+        if test_metrics_path is None or not Path(test_metrics_path).exists():
+            continue
+
+        metrics_row = pd.read_csv(test_metrics_path).iloc[0].to_dict()
+        exact_row = {}
+        if exact_match_summary_path is not None and Path(exact_match_summary_path).exists():
+            exact_row = pd.read_csv(exact_match_summary_path).iloc[0].to_dict()
+
+        exact_accuracy = exact_row.get(
+            "exact_match_accuracy",
+            metrics_row.get("exact_match_accuracy", float("nan")),
+        )
+        rows.append(
+            {
+                "model_order": int(spec.get("model_order", model_order)),
+                "model_label": str(spec.get("model_label", spec.get("model_id", "model"))),
+                "exact_match_accuracy": float(exact_accuracy),
+                "num_exact_matches": exact_row.get("num_exact_matches", float("nan")),
+                "num_glycans": exact_row.get("num_glycans", float("nan")),
+                "macro_f1": metrics_row.get("macro_f1", float("nan")),
+                "weighted_f1": metrics_row.get("weighted_f1", float("nan")),
+                "threshold": metrics_row.get("threshold", float("nan")),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def _lookup_labels(
     label_lookup: dict[str, dict[str, dict[str, object]]] | None,
     accession: str,
@@ -1194,6 +1240,43 @@ def _render_plot_image(
     )
 
 
+def _render_classification_exact_match_card(summary_df: "pd.DataFrame") -> str:
+    """Render the notebook-11 exact-match results in the report header."""
+    if summary_df.empty:
+        return (
+            '<div class="card">'
+            "<h3>Classification exact-match check</h3>"
+            "<p>No notebook-11 classification evaluation summaries were found for these model runs.</p>"
+            "</div>"
+        )
+
+    rows = []
+    for row in summary_df.sort_values("model_order").itertuples(index=False):
+        exact_percent = float(row.exact_match_accuracy) * 100
+        count_text = ""
+        if pd.notna(row.num_exact_matches) and pd.notna(row.num_glycans):
+            count_text = f" ({int(row.num_exact_matches)}/{int(row.num_glycans)})"
+        rows.append(
+            "<tr>"
+            f"<td>{escape(str(row.model_label))}</td>"
+            f"<td>{exact_percent:.2f}%{escape(count_text)}</td>"
+            f"<td>{float(row.macro_f1):.3f}</td>"
+            f"<td>{float(row.weighted_f1):.3f}</td>"
+            "</tr>"
+        )
+
+    return (
+        '<div class="card">'
+        "<h3>Classification exact-match check</h3>"
+        "<p>Notebook 11 test-set results for the classifier runs used in this embedding comparison.</p>"
+        '<div class="table-scroll compact-table-wrap">'
+        "<table><thead><tr><th>Model</th><th>Exact match</th><th>Macro F1</th><th>Weighted F1</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+        "</div>"
+        "</div>"
+    )
+
+
 def render_similarity_comparison_html_report(
     output_dir: str | Path,
     report_title: str,
@@ -1212,6 +1295,10 @@ def render_similarity_comparison_html_report(
     label_overlap_df = comparison_tables.get("cloud_label_overlap_model_comparison", pd.DataFrame())
     top_overlap_df = comparison_tables["top_neighbor_overlap_model_comparison"]
     venn_overlap_df = comparison_tables.get("three_way_cloud_overlap_summary", pd.DataFrame())
+    classification_exact_match_df = comparison_tables.get(
+        "classification_exact_match_summary",
+        pd.DataFrame(),
+    )
 
     all_vs_all_rows = []
     for row in all_vs_all_df.itertuples(index=False):
@@ -1400,11 +1487,7 @@ def render_similarity_comparison_html_report(
   </header>
   <main class="container">
     <div class="summary-grid">
-      <div class="card">
-        <h3>What this report checks</h3>
-        <p>Do different model states retrieve the same glycan neighborhoods, and do those neighborhoods look semantically meaningful by subtype labels and cartoons?</p>
-        <div class="link-list"><a href="similarity_model_comparison_index.html">Open output-file index</a></div>
-      </div>
+      {_render_classification_exact_match_card(classification_exact_match_df)}
       <div class="card">
         <h3>Gallery settings</h3>
         <p>Cloud threshold: <strong>>= {cloud_threshold:.2f}</strong><br>Neighbors shown per query/model: <strong>{top_n_neighbors}</strong></p>
@@ -1631,6 +1714,7 @@ def build_similarity_model_comparison(
             cloud_threshold=html_cloud_threshold,
             top_n_neighbors=html_top_n_neighbors,
         ),
+        "classification_exact_match_summary": build_classification_exact_match_summary(run_specs),
     }
 
     if label_lookup is not None:
