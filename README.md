@@ -522,8 +522,11 @@ Main outputs:
 - `all_vs_all_model_comparison.png`
 - `specific_vs_all_query_medians.png`
 - `threshold_cloud_size_model_comparison_<threshold>.png`
+- `similarity_model_comparison_index.html`
 - `index.html`
 - `similarity_model_comparison_report.html`
+- `model_report_<model_name>.html`
+- `model_reports/<model_name>/`
 - `html_assets/cartoons/`
 
 Notes:
@@ -535,10 +538,17 @@ Notes:
   cell
 - by default, the HTML report embeds plots and cartoons directly into the HTML
   file so the report can be downloaded/shared as one standalone file
-- `index.html` is the model similarity comparison landing page and links to the
-  full visual report, plots, tables, config, manifest, and the original
-  notebook-8 HTML reports for each compared model run when available
-- plots in the HTML report are clickable and open larger in an in-page modal
+- the full HTML report includes links back to the original notebook-8 HTML
+  reports for each compared model run when those reports are available; notebook
+  12 copies those report folders and creates uniquely named
+  `model_report_<model_name>.html` entry pages so the links are not all just
+  files named `index.html`
+- `similarity_model_comparison_index.html` is the model similarity comparison
+  landing page and links to the full visual report, plots, tables, config,
+  manifest, and model-run reports; `index.html` is also saved as a compatibility
+  copy inside the same output folder
+- plots in the HTML report are clickable and open larger in an in-page modal;
+  if a browser blocks the modal, the plot link can still be opened directly
 - when exactly three model runs are compared, the HTML report includes a
   Venn-style accession-overlap diagram for each query similarity cloud
 - each query section also reports cloud label-match rates, including same-full
