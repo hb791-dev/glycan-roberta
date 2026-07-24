@@ -7,7 +7,9 @@ run on CPU-only Colab sessions.
 
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import shutil
 from html import escape
 from pathlib import Path
@@ -221,6 +223,17 @@ def _safe_stem(value: str) -> str:
 def _relative_path(path: str | Path, start_dir: str | Path) -> str:
     """Return a browser-friendly relative path for files used by the HTML report."""
     return Path(path).resolve().relative_to(Path(start_dir).resolve()).as_posix()
+
+
+def _file_to_data_uri(path: str | Path) -> str | None:
+    """Convert an image file to a data URI so the HTML can travel as one file."""
+    file_path = Path(path)
+    if not file_path.exists():
+        return None
+
+    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    encoded_bytes = base64.b64encode(file_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded_bytes}"
 
 
 def _resolve_cartoon_source_path(local_image_path: str | Path, run_dir: str | Path) -> Path | None:
@@ -804,37 +817,63 @@ def _render_relation_badge(relation: str) -> str:
     return f'<span class="badge {badge_class}">{escape(label)}</span>'
 
 
-def _render_cartoon_image(image_path: str, output_dir: Path, mini: bool = False) -> str:
+def _render_cartoon_image(
+    image_path: str,
+    output_dir: Path,
+    mini: bool = False,
+    embed_images: bool = True,
+) -> str:
     """Render a cached cartoon image if available."""
     css_class = "mini-cartoon" if mini else "cartoon-box"
     if not image_path:
         return f'<div class="{css_class}"><div class="missing-cartoon">cartoon not cached</div></div>'
 
-    copied_path = _copy_cartoon_for_report(
-        Path(image_path) if Path(image_path).exists() else None,
-        output_dir / "html_assets" / "cartoons",
-        Path(image_path).stem,
-    )
-    if copied_path is None:
+    source_path = Path(image_path) if Path(image_path).exists() else None
+    if source_path is None:
         return f'<div class="{css_class}"><div class="missing-cartoon">cartoon file missing</div></div>'
 
-    relative_image_path = _relative_path(copied_path, output_dir)
+    if embed_images:
+        image_source = _file_to_data_uri(source_path)
+    else:
+        copied_path = _copy_cartoon_for_report(
+            source_path,
+            output_dir / "html_assets" / "cartoons",
+            source_path.stem,
+        )
+        image_source = _relative_path(copied_path, output_dir) if copied_path else None
+
+    if image_source is None:
+        return f'<div class="{css_class}"><div class="missing-cartoon">cartoon file missing</div></div>'
+
     return (
         f'<div class="{css_class}">'
-        f'<img src="{escape(relative_image_path)}" alt="glycan cartoon">'
+        f'<img src="{escape(image_source)}" alt="glycan cartoon">'
         "</div>"
     )
 
 
-def _render_plot_image(plot_path: str, output_dir: Path, title: str) -> str:
+def _render_plot_image(
+    plot_path: str,
+    output_dir: Path,
+    title: str,
+    embed_images: bool = True,
+) -> str:
     """Render one saved PNG plot inside the HTML report."""
     if not plot_path or not Path(plot_path).exists():
         return ""
-    relative_plot_path = _relative_path(plot_path, output_dir)
+
+    if embed_images:
+        image_source = _file_to_data_uri(plot_path)
+    else:
+        image_source = _relative_path(plot_path, output_dir)
+
+    if image_source is None:
+        return ""
+
     return (
         '<div class="plot-card">'
         f"<h3>{escape(title)}</h3>"
-        f'<img src="{escape(relative_plot_path)}" alt="{escape(title)}">'
+        f'<img src="{escape(image_source)}" alt="{escape(title)}">'
         "</div>"
     )
 
@@ -847,6 +886,7 @@ def render_similarity_comparison_html_report(
     gallery_table_df: "pd.DataFrame",
     cloud_threshold: float,
     top_n_neighbors: int,
+    embed_images: bool = True,
 ) -> str:
     """Render a professor-friendly HTML report for model similarity comparison."""
     output_path = Path(output_dir)
@@ -917,12 +957,23 @@ def render_similarity_comparison_html_report(
     threshold_plot_key = f">= {cloud_threshold:.2f}"
     plot_html = "".join(
         [
-            _render_plot_image(str(plot_paths.get("all_vs_all_plot", "")), output_path, "Whole-space similarity"),
-            _render_plot_image(str(plot_paths.get("specific_vs_all_plot", "")), output_path, "Query median similarity"),
+            _render_plot_image(
+                str(plot_paths.get("all_vs_all_plot", "")),
+                output_path,
+                "Whole-space similarity",
+                embed_images=embed_images,
+            ),
+            _render_plot_image(
+                str(plot_paths.get("specific_vs_all_plot", "")),
+                output_path,
+                "Query median similarity",
+                embed_images=embed_images,
+            ),
             _render_plot_image(
                 str(threshold_plot_paths.get(threshold_plot_key, "")),
                 output_path,
                 f"Cloud sizes at >= {cloud_threshold:.2f}",
+                embed_images=embed_images,
             ),
         ]
     )
@@ -935,6 +986,7 @@ def render_similarity_comparison_html_report(
             str(first_row["query_cartoon_path"]),
             output_path,
             mini=False,
+            embed_images=embed_images,
         )
 
         model_columns = []
@@ -956,7 +1008,7 @@ def render_similarity_comparison_html_report(
                     f'<span>#{int(row.rank)} {escape(str(row.display_accession))}</span>'
                     f'<span>{float(row.cosine_similarity):.3f}</span>'
                     "</div>"
-                    f'{_render_cartoon_image(str(row.neighbor_cartoon_path), output_path, mini=True)}'
+                    f'{_render_cartoon_image(str(row.neighbor_cartoon_path), output_path, mini=True, embed_images=embed_images)}'
                     '<div class="badge-row">'
                     f'{_render_relation_badge(str(row.label_relation))}'
                     f"{_render_labels(str(row.neighbor_labels_json))}"
@@ -1058,6 +1110,7 @@ def build_similarity_model_comparison(
     html_cloud_threshold: float = 0.90,
     html_top_n_neighbors: int = 8,
     report_title: str = "Similarity Model Comparison",
+    embed_html_images: bool = True,
 ) -> dict[str, object]:
     """Run the complete no-GPU model-comparison workflow."""
     output_path = Path(output_dir)
@@ -1129,6 +1182,7 @@ def build_similarity_model_comparison(
         gallery_table_df=comparison_tables["html_neighbor_gallery_table"],
         cloud_threshold=html_cloud_threshold,
         top_n_neighbors=html_top_n_neighbors,
+        embed_images=embed_html_images,
     )
     plot_paths["html_report_path"] = html_report_path
 
@@ -1145,6 +1199,7 @@ def build_similarity_model_comparison(
         "html_cloud_threshold": float(html_cloud_threshold),
         "html_top_n_neighbors": int(html_top_n_neighbors),
         "report_title": report_title,
+        "embed_html_images": bool(embed_html_images),
     }
     manifest_path = output_path / "similarity_model_comparison_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

@@ -531,8 +531,11 @@ Notes:
 - to compare another tokenizer or model group, edit `TOKENIZER_FAMILY`,
   `EXPERIMENT_NAME`, `OUTPUT_DIR`, and the `RUN_SPECS` list in the user settings
   cell
-- the HTML report reuses cartoons cached by notebook 8 and only copies the
-  query/top-neighbor cartoons needed for the report
+- by default, the HTML report embeds plots and cartoons directly into the HTML
+  file so the report can be downloaded/shared as one standalone file
+- if `EMBED_HTML_IMAGES` is set to `False`, the HTML report instead reuses
+  relative image files from `html_assets/cartoons/`, so the whole output folder
+  must be kept together
 - missing labels in cloud-label summaries are counted separately instead of
   being treated as negative examples
 
