@@ -497,13 +497,16 @@ Notes:
 ### `12_glyberta_similarity_model_comparison.ipynb`
 
 Purpose:
-- compare the notebook-8 similarity-scaleup outputs for three `glyberta` model
-  states
+- compare notebook-8 similarity-scaleup outputs across any set of model runs
+  listed in `RUN_SPECS`
+- use the current `glyberta` comparison as the default example
 - focus on the professor's question about whether embeddings produce different
   similarity distributions before and after classification fine-tuning
 - compare pretrained MLM embeddings, classifier embeddings from MLM init, and
-  classifier embeddings from random init
+  classifier embeddings from random init for the current default run
 - run as a no-GPU analysis step because it only reads saved CSV outputs
+- generate a visual HTML gallery report so cartoons and neighbor clouds can be
+  inspected side by side
 
 Main outputs:
 - `similarity_model_comparison_config.json`
@@ -514,14 +517,22 @@ Main outputs:
 - `top_neighbor_overlap_model_comparison.csv`
 - `threshold_cloud_overlap_model_comparison.csv`
 - `cloud_label_overlap_model_comparison.csv`
+- `html_neighbor_gallery_table.csv`
 - `all_vs_all_model_comparison.png`
 - `specific_vs_all_query_medians.png`
 - `threshold_cloud_size_model_comparison_<threshold>.png`
+- `similarity_model_comparison_report.html`
+- `html_assets/cartoons/`
 
 Notes:
 - the reusable comparison logic lives in `src/similarity_model_comparison.py`
 - this notebook does not recompute embeddings; it expects notebook 8 to have
   already produced matching `live_extended` similarity-scaleup folders
+- to compare another tokenizer or model group, edit `TOKENIZER_FAMILY`,
+  `EXPERIMENT_NAME`, `OUTPUT_DIR`, and the `RUN_SPECS` list in the user settings
+  cell
+- the HTML report reuses cartoons cached by notebook 8 and only copies the
+  query/top-neighbor cartoons needed for the report
 - missing labels in cloud-label summaries are counted separately instead of
   being treated as negative examples
 
