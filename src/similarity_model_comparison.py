@@ -154,7 +154,7 @@ h3 { font-size: 18px; }
 }
 .query-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: minmax(520px, 1fr) minmax(520px, 1fr);
   gap: 18px;
   align-items: start;
   margin-bottom: 18px;
@@ -170,12 +170,20 @@ h3 { font-size: 18px; }
   height: auto;
   display: block;
 }
+.venn-label {
+  font-family: Verdana, "Trebuchet MS", sans-serif;
+  font-weight: 700;
+}
+.venn-count {
+  font-family: Verdana, "Trebuchet MS", sans-serif;
+  font-weight: 700;
+}
 .label-stats-card {
   grid-column: 1 / -1;
 }
 .query-head {
   display: grid;
-  grid-template-columns: minmax(180px, 260px) 1fr;
+  grid-template-columns: minmax(260px, 1fr) minmax(180px, 0.55fr);
   gap: 18px;
   align-items: start;
   margin-bottom: 18px;
@@ -285,9 +293,12 @@ th, td {
   font-size: 13px;
 }
 th { background: #efe3cf; }
+@media (max-width: 1100px) {
+  .query-summary { grid-template-columns: 1fr; }
+}
 @media (max-width: 760px) {
   header, .container { padding-left: 18px; padding-right: 18px; }
-  .query-head, .query-summary { grid-template-columns: 1fr; }
+  .query-head { grid-template-columns: 1fr; }
 }
 """
 
@@ -1042,17 +1053,17 @@ def _render_three_way_venn_svg(row: "pd.Series") -> str:
     <circle cx="305" cy="150" r="105" fill="#4c9f70" fill-opacity="0.38" stroke="#1f7a4d" stroke-width="2"></circle>
     <circle cx="260" cy="235" r="105" fill="#5f8cc0" fill-opacity="0.38" stroke="#2c5f8f" stroke-width="2"></circle>
 
-    <text x="128" y="42" font-size="13" font-weight="bold">{escape(label_a)}</text>
-    <text x="315" y="42" font-size="13" font-weight="bold">{escape(label_b)}</text>
-    <text x="202" y="345" font-size="13" font-weight="bold">{escape(label_c)}</text>
+    <text class="venn-label" x="128" y="42" font-size="13">{escape(label_a)}</text>
+    <text class="venn-label" x="315" y="42" font-size="13">{escape(label_b)}</text>
+    <text class="venn-label" x="202" y="345" font-size="13">{escape(label_c)}</text>
 
-    <text x="176" y="135" font-size="26" font-weight="bold" text-anchor="middle">{a_only}</text>
-    <text x="344" y="135" font-size="26" font-weight="bold" text-anchor="middle">{b_only}</text>
-    <text x="260" y="285" font-size="26" font-weight="bold" text-anchor="middle">{c_only}</text>
-    <text x="260" y="132" font-size="24" font-weight="bold" text-anchor="middle">{a_b_only}</text>
-    <text x="218" y="215" font-size="24" font-weight="bold" text-anchor="middle">{a_c_only}</text>
-    <text x="302" y="215" font-size="24" font-weight="bold" text-anchor="middle">{b_c_only}</text>
-    <text x="260" y="184" font-size="28" font-weight="bold" text-anchor="middle">{all_three}</text>
+    <text class="venn-count" x="176" y="135" font-size="26" text-anchor="middle">{a_only}</text>
+    <text class="venn-count" x="344" y="135" font-size="26" text-anchor="middle">{b_only}</text>
+    <text class="venn-count" x="260" y="285" font-size="26" text-anchor="middle">{c_only}</text>
+    <text class="venn-count" x="260" y="132" font-size="24" text-anchor="middle">{a_b_only}</text>
+    <text class="venn-count" x="218" y="215" font-size="24" text-anchor="middle">{a_c_only}</text>
+    <text class="venn-count" x="302" y="215" font-size="24" text-anchor="middle">{b_c_only}</text>
+    <text class="venn-count" x="260" y="184" font-size="28" text-anchor="middle">{all_three}</text>
   </svg>
   <div class="badge-row">
     <span class="badge">{escape(label_a)}: {a_size}</span>
