@@ -523,8 +523,6 @@ Main outputs:
 - `all_vs_all_model_comparison.png`
 - `specific_vs_all_query_medians.png`
 - `threshold_cloud_size_model_comparison_<threshold>.png`
-- `similarity_model_comparison_index.html`
-- `index.html`
 - `similarity_model_comparison_report.html`
 - `html_assets/cartoons/`
 
@@ -540,10 +538,8 @@ Notes:
 - when classifier evaluation summaries from notebook 11 are available, the HTML
   report header shows exact-match, macro F1, and weighted F1 for those
   classifier runs
-- `similarity_model_comparison_index.html` is the model similarity comparison
-  landing page and links to the full visual report, plots, tables, config,
-  and manifest; `index.html` is also saved as a compatibility copy inside the
-  same output folder
+- notebook 12 intentionally saves only one shareable HTML report; the CSVs,
+  PNGs, config, and manifest stay as support files in the same output folder
 - plots in the HTML report are clickable and open larger in an in-page modal;
   if a browser blocks the modal, the plot link can still be opened directly
 - when exactly three model runs are compared, the HTML report includes a

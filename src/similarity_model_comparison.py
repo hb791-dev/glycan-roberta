@@ -1567,111 +1567,12 @@ def render_similarity_comparison_html_report(
     return str(html_path)
 
 
-def _render_output_link(path: str | Path, output_dir: Path, label: str) -> str:
-    """Render a relative link for an output file when possible."""
-    if not str(path):
-        return ""
-
-    file_path = Path(path)
-    if file_path.exists():
-        try:
-            link_target = _relative_path(file_path, output_dir)
-        except ValueError:
-            link_target = str(file_path)
-    else:
-        link_target = str(path)
-    return f'<a href="{escape(link_target)}">{escape(label)}</a>'
-
-
 def _json_safe_record(record: dict[str, object]) -> dict[str, object]:
     """Convert Path-like values before saving config or manifest JSON."""
     return {
         key: str(value) if isinstance(value, Path) else value
         for key, value in record.items()
     }
-
-
-def render_similarity_comparison_index_html(
-    output_dir: str | Path,
-    report_title: str,
-    table_paths: dict[str, str],
-    plot_paths: dict[str, object],
-    manifest_path: str | Path,
-    config_path: str | Path,
-) -> str:
-    """Render a compact index page for the model-comparison output folder."""
-    output_path = Path(output_dir)
-    index_path = output_path / "similarity_model_comparison_index.html"
-    compatibility_index_path = output_path / "index.html"
-
-    main_links = [
-        _render_output_link(
-            plot_paths.get("html_report_path", ""),
-            output_path,
-            "Open full visual comparison report",
-        ),
-        _render_output_link(manifest_path, output_path, "Open output manifest JSON"),
-        _render_output_link(config_path, output_path, "Open comparison config JSON"),
-    ]
-    main_links_html = "".join(f"<div>{link}</div>" for link in main_links if link)
-
-    plot_links = [
-        _render_output_link(plot_paths.get("all_vs_all_plot", ""), output_path, "All-vs-all summary plot"),
-        _render_output_link(plot_paths.get("specific_vs_all_plot", ""), output_path, "Specific-vs-all query median plot"),
-    ]
-    threshold_plot_paths = plot_paths.get("threshold_cloud_size_plots", {})
-    if isinstance(threshold_plot_paths, dict):
-        for threshold_label, plot_path in threshold_plot_paths.items():
-            plot_links.append(
-                _render_output_link(
-                    plot_path,
-                    output_path,
-                    f"Cloud-size plot {threshold_label}",
-                )
-            )
-    plot_links_html = "".join(f"<div>{link}</div>" for link in plot_links if link)
-
-    table_links = [
-        _render_output_link(table_path, output_path, table_name)
-        for table_name, table_path in sorted(table_paths.items())
-    ]
-    table_links_html = "".join(f"<div>{link}</div>" for link in table_links if link)
-
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(report_title)} index</title>
-  <style>{HTML_STYLE}</style>
-</head>
-<body>
-  <header>
-    <h1>{escape(report_title)} index</h1>
-    <p class="subtle">Landing page for the reusable model similarity comparison outputs.</p>
-  </header>
-  <main class="container">
-    <div class="summary-grid">
-      <div class="card">
-        <h3>Main files</h3>
-        <div class="link-list">{main_links_html}</div>
-      </div>
-      <div class="card">
-        <h3>Plots</h3>
-        <div class="link-list">{plot_links_html}</div>
-      </div>
-      <div class="card">
-        <h3>Tables</h3>
-        <div class="link-list">{table_links_html}</div>
-      </div>
-    </div>
-  </main>
-</body>
-</html>
-"""
-    index_path.write_text(html, encoding="utf-8")
-    compatibility_index_path.write_text(html, encoding="utf-8")
-    return str(index_path)
 
 
 def build_similarity_model_comparison(
@@ -1782,15 +1683,15 @@ def build_similarity_model_comparison(
     }
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    html_index_path = render_similarity_comparison_index_html(
-        output_dir=output_path,
-        report_title=report_title,
-        table_paths=saved_table_paths,
-        plot_paths=plot_paths,
-        manifest_path=manifest_path,
-        config_path=output_path / "similarity_model_comparison_config.json",
-    )
-    plot_paths["html_index_path"] = html_index_path
+    # Older notebook-12 versions wrote extra landing pages. The report is now
+    # self-contained, so remove stale copies when rerunning into the same folder.
+    for stale_html_path in [
+        output_path / "similarity_model_comparison_index.html",
+        output_path / "index.html",
+    ]:
+        if stale_html_path.exists():
+            stale_html_path.unlink()
+
     manifest["plot_paths"] = plot_paths
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
