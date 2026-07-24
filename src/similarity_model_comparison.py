@@ -1583,6 +1583,14 @@ def _render_output_link(path: str | Path, output_dir: Path, label: str) -> str:
     return f'<a href="{escape(link_target)}">{escape(label)}</a>'
 
 
+def _json_safe_record(record: dict[str, object]) -> dict[str, object]:
+    """Convert Path-like values before saving config or manifest JSON."""
+    return {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in record.items()
+    }
+
+
 def render_similarity_comparison_index_html(
     output_dir: str | Path,
     report_title: str,
@@ -1762,7 +1770,7 @@ def build_similarity_model_comparison(
         "table_paths": saved_table_paths,
         "plot_paths": plot_paths,
         "run_specs": [
-            {**spec, "run_dir": str(spec["run_dir"])}
+            _json_safe_record(spec)
             for spec in run_specs
         ],
         "cloud_thresholds": cloud_thresholds,
