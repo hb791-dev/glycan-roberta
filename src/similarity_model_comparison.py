@@ -78,6 +78,14 @@ h3 { font-size: 18px; }
   text-decoration: none;
   cursor: zoom-in;
 }
+.plot-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
 .plot-card img {
   display: block;
   width: 100%;
@@ -90,13 +98,57 @@ h3 { font-size: 18px; }
   color: var(--muted);
   font-size: 12px;
 }
+.plot-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  padding: 28px;
+  background: rgba(29, 36, 51, 0.84);
+}
+.plot-modal.is-open {
+  display: grid;
+  place-items: center;
+}
+.plot-modal-content {
+  width: min(1180px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--card);
+  border-radius: 18px;
+  padding: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+.plot-modal-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.plot-modal img {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: white;
+  border-radius: 12px;
+}
+.plot-close {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: white;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 6px 12px;
+  font-weight: bold;
+}
 .query-section {
   padding: 20px;
   margin: 22px 0;
 }
 .query-summary {
   display: grid;
-  grid-template-columns: minmax(260px, 380px) 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 18px;
   align-items: start;
   margin-bottom: 18px;
@@ -118,6 +170,10 @@ h3 { font-size: 18px; }
   gap: 18px;
   align-items: start;
   margin-bottom: 18px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px;
 }
 .cartoon-box {
   min-height: 120px;
@@ -551,6 +607,12 @@ def build_top_neighbor_overlap(
 ) -> "pd.DataFrame":
     """Compare how much the top query neighbors overlap between model pairs."""
     top_df = ranked_df.loc[ranked_df["rank"] <= int(top_k)].copy()
+    model_label_by_id = (
+        ranked_df[["model_id", "model_label"]]
+        .drop_duplicates()
+        .set_index("model_id")["model_label"]
+        .to_dict()
+    )
     rows = []
 
     for query_accession, query_df in top_df.groupby("query_accession", sort=False):
@@ -570,6 +632,8 @@ def build_top_neighbor_overlap(
                         "query_accession": query_accession,
                         "model_a": left_model,
                         "model_b": right_model,
+                        "model_a_label": model_label_by_id.get(left_model, left_model),
+                        "model_b_label": model_label_by_id.get(right_model, right_model),
                         "top_k": int(top_k),
                         "overlap_count": intersection_size,
                         "jaccard_overlap": intersection_size / union_size if union_size else 0.0,
@@ -1083,10 +1147,10 @@ def _render_plot_image(
     return (
         '<div class="plot-card">'
         f"<h3>{escape(title)}</h3>"
-        f'<a href="{escape(image_source)}" target="_blank" rel="noopener noreferrer">'
+        '<button class="plot-button" type="button" onclick="openPlotModal(this)">'
         f'<img src="{escape(image_source)}" alt="{escape(title)}">'
-        "</a>"
-        '<p class="plot-hint">Click plot to open larger.</p>'
+        "</button>"
+        '<p class="plot-hint">Click plot to enlarge in this report.</p>'
         "</div>"
     )
 
@@ -1152,16 +1216,19 @@ def render_similarity_comparison_html_report(
         )
 
     pair_rows = []
+    pair_label_columns = ["model_a_label", "model_b_label"]
+    if not set(pair_label_columns).issubset(top_overlap_df.columns):
+        pair_label_columns = ["model_a", "model_b"]
     pair_summary_df = (
-        top_overlap_df.groupby(["model_a", "model_b"], as_index=False)[["overlap_count", "jaccard_overlap"]]
+        top_overlap_df.groupby(pair_label_columns, as_index=False)[["overlap_count", "jaccard_overlap"]]
         .mean()
-        .sort_values(["model_a", "model_b"])
+        .sort_values(pair_label_columns)
     )
     for row in pair_summary_df.itertuples(index=False):
         pair_rows.append(
             "<tr>"
-            f"<td>{escape(str(row.model_a))}</td>"
-            f"<td>{escape(str(row.model_b))}</td>"
+            f"<td>{escape(str(getattr(row, pair_label_columns[0])))}</td>"
+            f"<td>{escape(str(getattr(row, pair_label_columns[1])))}</td>"
             f"<td>{float(row.overlap_count):.1f}</td>"
             f"<td>{float(row.jaccard_overlap):.3f}</td>"
             "</tr>"
@@ -1324,9 +1391,9 @@ def render_similarity_comparison_html_report(
     {label_summary_html}
 
     <h2>Top-neighbor overlap</h2>
-    <p class="subtle">Lower overlap means the models are choosing different nearest-neighbor sets.</p>
+    <p class="subtle">This compares each pair of models across the query glycans. Mean shared top-neighbor count is the average number of neighbors that appear in both models' top-neighbor lists. Mean Jaccard overlap is shared neighbors divided by total unique neighbors, so 0 means no overlap and 1 means identical neighbor sets.</p>
     <table>
-      <thead><tr><th>Model A</th><th>Model B</th><th>Mean overlap count</th><th>Mean Jaccard</th></tr></thead>
+      <thead><tr><th>Model A</th><th>Model B</th><th>Mean shared top neighbors</th><th>Mean Jaccard overlap</th></tr></thead>
       <tbody>{''.join(pair_rows)}</tbody>
     </table>
 
@@ -1334,6 +1401,43 @@ def render_similarity_comparison_html_report(
     <p class="subtle">These sections are the visual sanity check: same query, model-specific nearest neighbors, cartoons, labels, and threshold-cloud membership.</p>
     {''.join(query_sections)}
   </main>
+  <div class="plot-modal" id="plot-modal" onclick="closePlotModal(event)">
+    <div class="plot-modal-content" onclick="event.stopPropagation()">
+      <div class="plot-modal-title">
+        <h2 id="plot-modal-title">Plot</h2>
+        <button class="plot-close" type="button" onclick="closePlotModal()">Close</button>
+      </div>
+      <img id="plot-modal-image" src="" alt="">
+    </div>
+  </div>
+  <script>
+    function openPlotModal(buttonElement) {{
+      const imageElement = buttonElement.querySelector('img');
+      const modalElement = document.getElementById('plot-modal');
+      const modalImageElement = document.getElementById('plot-modal-image');
+      const modalTitleElement = document.getElementById('plot-modal-title');
+      modalImageElement.src = imageElement.src;
+      modalImageElement.alt = imageElement.alt;
+      modalTitleElement.textContent = imageElement.alt || 'Plot';
+      modalElement.classList.add('is-open');
+    }}
+
+    function closePlotModal(event) {{
+      if (event && event.target && event.target.id !== 'plot-modal') {{
+        return;
+      }}
+      const modalElement = document.getElementById('plot-modal');
+      const modalImageElement = document.getElementById('plot-modal-image');
+      modalElement.classList.remove('is-open');
+      modalImageElement.src = '';
+    }}
+
+    document.addEventListener('keydown', function(event) {{
+      if (event.key === 'Escape') {{
+        closePlotModal();
+      }}
+    }});
+  </script>
 </body>
 </html>
 """
@@ -1347,7 +1451,13 @@ def _render_output_link(path: str | Path, output_dir: Path, label: str) -> str:
         return ""
 
     file_path = Path(path)
-    link_target = _relative_path(file_path, output_dir) if file_path.exists() else str(path)
+    if file_path.exists():
+        try:
+            link_target = _relative_path(file_path, output_dir)
+        except ValueError:
+            link_target = str(file_path)
+    else:
+        link_target = str(path)
     return f'<a href="{escape(link_target)}">{escape(label)}</a>'
 
 
@@ -1358,6 +1468,7 @@ def render_similarity_comparison_index_html(
     plot_paths: dict[str, object],
     manifest_path: str | Path,
     config_path: str | Path,
+    run_specs: list[dict[str, str | Path]],
 ) -> str:
     """Render a compact index page for the model-comparison output folder."""
     output_path = Path(output_dir)
@@ -1396,6 +1507,19 @@ def render_similarity_comparison_index_html(
     ]
     table_links_html = "".join(f"<div>{link}</div>" for link in table_links if link)
 
+    model_links = []
+    for spec in run_specs:
+        model_label = str(spec.get("model_label", spec.get("model_id", "model")))
+        run_dir = Path(spec["run_dir"])
+        run_index_path = run_dir / "html" / "index.html"
+        if run_index_path.exists():
+            model_links.append(_render_output_link(run_index_path, output_path, model_label))
+        else:
+            model_links.append(
+                f'<span class="subtle">{escape(model_label)}: no notebook-8 HTML index found</span>'
+            )
+    model_links_html = "".join(f"<div>{link}</div>" for link in model_links if link)
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1422,6 +1546,11 @@ def render_similarity_comparison_index_html(
       <div class="card">
         <h3>Tables</h3>
         <div class="link-list">{table_links_html}</div>
+      </div>
+      <div class="card">
+        <h3>Compared model runs</h3>
+        <p class="subtle">Links open the original notebook-8 similarity reports for each model run when available.</p>
+        <div class="link-list">{model_links_html}</div>
       </div>
     </div>
   </main>
@@ -1546,6 +1675,7 @@ def build_similarity_model_comparison(
         plot_paths=plot_paths,
         manifest_path=manifest_path,
         config_path=output_path / "similarity_model_comparison_config.json",
+        run_specs=run_specs,
     )
     plot_paths["html_index_path"] = html_index_path
     manifest["plot_paths"] = plot_paths

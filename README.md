@@ -536,9 +536,9 @@ Notes:
 - by default, the HTML report embeds plots and cartoons directly into the HTML
   file so the report can be downloaded/shared as one standalone file
 - `index.html` is the model similarity comparison landing page and links to the
-  full visual report, plots, tables, config, and manifest
-- plots in the HTML report are clickable so they can be opened larger in a new
-  browser tab/window
+  full visual report, plots, tables, config, manifest, and the original
+  notebook-8 HTML reports for each compared model run when available
+- plots in the HTML report are clickable and open larger in an in-page modal
 - when exactly three model runs are compared, the HTML report includes a
   Venn-style accession-overlap diagram for each query similarity cloud
 - each query section also reports cloud label-match rates, including same-full
