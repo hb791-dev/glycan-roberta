@@ -525,8 +525,6 @@ Main outputs:
 - `similarity_model_comparison_index.html`
 - `index.html`
 - `similarity_model_comparison_report.html`
-- `model_report_<model_name>.html`
-- `model_reports/<model_name>/`
 - `html_assets/cartoons/`
 
 Notes:
@@ -538,22 +536,17 @@ Notes:
   cell
 - by default, the HTML report embeds plots and cartoons directly into the HTML
   file so the report can be downloaded/shared as one standalone file
-- the full HTML report includes links back to the original notebook-8 HTML
-  reports for each compared model run when those reports are available; notebook
-  12 copies those report folders and creates uniquely named
-  `model_report_<model_name>.html` entry pages so the links are not all just
-  files named `index.html`
 - `similarity_model_comparison_index.html` is the model similarity comparison
   landing page and links to the full visual report, plots, tables, config,
-  manifest, and model-run reports; `index.html` is also saved as a compatibility
-  copy inside the same output folder
+  and manifest; `index.html` is also saved as a compatibility copy inside the
+  same output folder
 - plots in the HTML report are clickable and open larger in an in-page modal;
   if a browser blocks the modal, the plot link can still be opened directly
 - when exactly three model runs are compared, the HTML report includes a
   Venn-style accession-overlap diagram for each query similarity cloud
-- each query section also reports cloud label-match rates, including same-full
-  label-set rate, partial-or-exact label-match rate, labeled neighbor count, and
-  unavailable-label count
+- each query section also reports cloud label-match rates, including exact same
+  label-set rate, partial-only shared-label rate, any shared-label rate, labeled
+  neighbor count, and unavailable-label count
 - if `EMBED_HTML_IMAGES` is set to `False`, the HTML report instead reuses
   relative image files from `html_assets/cartoons/`, so the whole output folder
   must be kept together

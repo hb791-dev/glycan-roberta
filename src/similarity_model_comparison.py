@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
-import re
 import shutil
 from html import escape
 from pathlib import Path
@@ -219,6 +218,13 @@ h3 { font-size: 18px; }
   border-radius: 10px;
   font-family: "Menlo", "Consolas", monospace;
   font-size: 12px;
+}
+.query-sequence {
+  max-height: 150px;
+  min-height: 110px;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.45;
 }
 .badge-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .badge {
@@ -1094,7 +1100,8 @@ def _render_query_label_consistency_table(
     rows = []
     for row in query_label_df.itertuples(index=False):
         same_full_set_rate = float(row.exact_label_set_match_rate) * 100
-        partial_or_exact_rate = float(row.any_label_overlap_rate) * 100
+        any_shared_label_rate = float(row.any_label_overlap_rate) * 100
+        partial_only_rate = max(any_shared_label_rate - same_full_set_rate, 0.0)
         rows.append(
             "<tr>"
             f"<td>{escape(str(row.model_label))}</td>"
@@ -1102,7 +1109,8 @@ def _render_query_label_consistency_table(
             f"<td>{int(row.labeled_neighbors)}</td>"
             f"<td>{int(row.neighbors_without_labels)}</td>"
             f"<td>{same_full_set_rate:.1f}%</td>"
-            f"<td>{partial_or_exact_rate:.1f}%</td>"
+            f"<td>{partial_only_rate:.1f}%</td>"
+            f"<td>{any_shared_label_rate:.1f}%</td>"
             "</tr>"
         )
 
@@ -1110,10 +1118,11 @@ def _render_query_label_consistency_table(
         '<div class="venn-card label-stats-card">'
         "<h3>Cloud label match rates</h3>"
         f'<p class="subtle">Computed within this query cloud at threshold &gt;= {cloud_threshold:.2f}. '
-        "Unavailable labels are counted separately, not as wrong.</p>"
+        "Percentages use only neighbors with prepared labels. Neighbors with no prepared label are shown separately.</p>"
         '<div class="table-scroll">'
-        "<table><thead><tr><th>Model</th><th>Cloud</th><th>Labeled</th>"
-        "<th>Unavailable</th><th>Same full set</th><th>Partial/exact match</th></tr></thead>"
+        "<table><thead><tr><th>Model</th><th>Total in cloud</th><th>With labels</th>"
+        "<th>No label available</th><th>Exact same label set</th><th>Partial-only shared label</th>"
+        "<th>Any shared label</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
         "</div>"
         "</div>"
@@ -1193,7 +1202,6 @@ def render_similarity_comparison_html_report(
     gallery_table_df: "pd.DataFrame",
     cloud_threshold: float,
     top_n_neighbors: int,
-    run_specs: list[dict[str, str | Path]] | None = None,
     embed_images: bool = True,
 ) -> str:
     """Render a professor-friendly HTML report for model similarity comparison."""
@@ -1204,16 +1212,6 @@ def render_similarity_comparison_html_report(
     label_overlap_df = comparison_tables.get("cloud_label_overlap_model_comparison", pd.DataFrame())
     top_overlap_df = comparison_tables["top_neighbor_overlap_model_comparison"]
     venn_overlap_df = comparison_tables.get("three_way_cloud_overlap_summary", pd.DataFrame())
-    model_links_html = _build_model_run_links_html(run_specs or [], output_path)
-    model_links_card_html = ""
-    if model_links_html:
-        model_links_card_html = (
-            '<div class="card">'
-            "<h3>Compared model runs</h3>"
-            '<p class="subtle">These links use unique filenames, then open copied notebook-8 similarity reports for each model run when available.</p>'
-            f'<div class="link-list">{model_links_html}</div>'
-            "</div>"
-        )
 
     all_vs_all_rows = []
     for row in all_vs_all_df.itertuples(index=False):
@@ -1375,7 +1373,7 @@ def render_similarity_comparison_html_report(
             '<div class="badge-row">'
             f"{query_labels_html}"
             "</div>"
-            f'<div class="sequence">{escape(str(first_row["query_sequence"]))}</div>'
+            f'<div class="sequence query-sequence">{escape(str(first_row["query_sequence"]))}</div>'
             "</div>"
             "</div>"
             f"{venn_html}"
@@ -1418,7 +1416,6 @@ def render_similarity_comparison_html_report(
         <p><strong>Label unavailable</strong>: no usable prepared GlycoMotif subtype label was available for that neighbor.</p>
         <p><strong>Different prepared labels</strong>: both glycans have labels, but none overlap.</p>
       </div>
-      {model_links_card_html}
     </div>
 
     <h2>Saved comparison plots</h2>
@@ -1433,7 +1430,7 @@ def render_similarity_comparison_html_report(
     {label_summary_html}
 
     <h2>Top-neighbor overlap</h2>
-    <p class="subtle">Each row compares two models using the same query glycans. Mean shared top neighbors is the average number of accessions shared between the two top-{top_n_neighbors} neighbor lists. Mean normalized overlap is |shared accessions| / |unique accessions across both lists|, where 0 means no overlap and 1 means the two models returned the same neighbors.</p>
+    <p class="subtle">Each row compares two models using the same query glycans. Mean shared top neighbors is the average number of accessions shared between the two top-{top_n_neighbors} neighbor lists. Mean normalized overlap is the shared count divided by the total unique accessions across both lists. Zero means no overlap; one means the two models returned the same neighbors.</p>
     <table>
       <thead><tr><th>Model A</th><th>Model B</th><th>Mean shared top neighbors</th><th>Mean normalized overlap</th></tr></thead>
       <tbody>{''.join(pair_rows)}</tbody>
@@ -1503,80 +1500,6 @@ def _render_output_link(path: str | Path, output_dir: Path, label: str) -> str:
     return f'<a href="{escape(link_target)}">{escape(label)}</a>'
 
 
-def _slugify_for_filename(value: str) -> str:
-    """Make a short readable filename part from a model label."""
-    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
-    return slug or "model"
-
-
-def _write_model_report_entry_page(
-    output_dir: Path,
-    model_label: str,
-    copied_index_path: Path,
-    slug: str,
-) -> Path:
-    """Write a uniquely named page that opens one copied notebook-8 report."""
-    entry_path = output_dir / f"model_report_{slug}.html"
-    copied_index_link = _relative_path(copied_index_path, output_dir)
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(model_label)} similarity report</title>
-  <style>{HTML_STYLE}</style>
-</head>
-<body>
-  <header>
-    <h1>{escape(model_label)} similarity report</h1>
-    <p class="subtle">This page has a unique filename so the compared model reports do not all appear as files named index.html.</p>
-  </header>
-  <main class="container">
-    <div class="card">
-      <h3>Open original notebook-8 report</h3>
-      <p>The original report folder was copied into this comparison output so its relative links stay together.</p>
-      <div class="link-list">
-        <a href="{escape(copied_index_link)}">Open {escape(model_label)} notebook-8 report</a>
-      </div>
-    </div>
-  </main>
-</body>
-</html>
-"""
-    entry_path.write_text(html, encoding="utf-8")
-    return entry_path
-
-
-def _build_model_run_links_html(
-    run_specs: list[dict[str, str | Path]],
-    output_dir: Path,
-) -> str:
-    """Build uniquely named links to copied notebook-8 reports."""
-    model_links = []
-    for spec in run_specs:
-        model_label = str(spec.get("model_label", spec.get("model_id", "model")))
-        run_dir = Path(spec["run_dir"])
-        source_html_dir = run_dir / "html"
-        source_index_path = source_html_dir / "index.html"
-        if source_index_path.exists():
-            slug = _slugify_for_filename(model_label)
-            copied_html_dir = output_dir / "model_reports" / slug
-            shutil.copytree(source_html_dir, copied_html_dir, dirs_exist_ok=True)
-            copied_index_path = copied_html_dir / "index.html"
-            entry_path = _write_model_report_entry_page(
-                output_dir=output_dir,
-                model_label=model_label,
-                copied_index_path=copied_index_path,
-                slug=slug,
-            )
-            model_links.append(_render_output_link(entry_path, output_dir, model_label))
-        else:
-            model_links.append(
-                f'<span class="subtle">{escape(model_label)}: no notebook-8 HTML index found</span>'
-            )
-    return "".join(f"<div>{link}</div>" for link in model_links if link)
-
-
 def render_similarity_comparison_index_html(
     output_dir: str | Path,
     report_title: str,
@@ -1584,7 +1507,6 @@ def render_similarity_comparison_index_html(
     plot_paths: dict[str, object],
     manifest_path: str | Path,
     config_path: str | Path,
-    run_specs: list[dict[str, str | Path]],
 ) -> str:
     """Render a compact index page for the model-comparison output folder."""
     output_path = Path(output_dir)
@@ -1624,8 +1546,6 @@ def render_similarity_comparison_index_html(
     ]
     table_links_html = "".join(f"<div>{link}</div>" for link in table_links if link)
 
-    model_links_html = _build_model_run_links_html(run_specs, output_path)
-
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1652,11 +1572,6 @@ def render_similarity_comparison_index_html(
       <div class="card">
         <h3>Tables</h3>
         <div class="link-list">{table_links_html}</div>
-      </div>
-      <div class="card">
-        <h3>Compared model runs</h3>
-        <p class="subtle">Links use unique filenames, then open copied notebook-8 similarity reports for each model run when available.</p>
-        <div class="link-list">{model_links_html}</div>
       </div>
     </div>
   </main>
@@ -1753,7 +1668,6 @@ def build_similarity_model_comparison(
         gallery_table_df=comparison_tables["html_neighbor_gallery_table"],
         cloud_threshold=html_cloud_threshold,
         top_n_neighbors=html_top_n_neighbors,
-        run_specs=run_specs,
         embed_images=embed_html_images,
     )
     plot_paths["html_report_path"] = html_report_path
@@ -1783,7 +1697,6 @@ def build_similarity_model_comparison(
         plot_paths=plot_paths,
         manifest_path=manifest_path,
         config_path=output_path / "similarity_model_comparison_config.json",
-        run_specs=run_specs,
     )
     plot_paths["html_index_path"] = html_index_path
     manifest["plot_paths"] = plot_paths
