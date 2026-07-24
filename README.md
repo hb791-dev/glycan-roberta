@@ -516,11 +516,13 @@ Main outputs:
 - `threshold_cloud_size_model_comparison.csv`
 - `top_neighbor_overlap_model_comparison.csv`
 - `threshold_cloud_overlap_model_comparison.csv`
+- `three_way_cloud_overlap_summary.csv`
 - `cloud_label_overlap_model_comparison.csv`
 - `html_neighbor_gallery_table.csv`
 - `all_vs_all_model_comparison.png`
 - `specific_vs_all_query_medians.png`
 - `threshold_cloud_size_model_comparison_<threshold>.png`
+- `index.html`
 - `similarity_model_comparison_report.html`
 - `html_assets/cartoons/`
 
@@ -533,6 +535,15 @@ Notes:
   cell
 - by default, the HTML report embeds plots and cartoons directly into the HTML
   file so the report can be downloaded/shared as one standalone file
+- `index.html` is the model similarity comparison landing page and links to the
+  full visual report, plots, tables, config, and manifest
+- plots in the HTML report are clickable so they can be opened larger in a new
+  browser tab/window
+- when exactly three model runs are compared, the HTML report includes a
+  Venn-style accession-overlap diagram for each query similarity cloud
+- each query section also reports cloud label-match rates, including same-full
+  label-set rate, partial-or-exact label-match rate, labeled neighbor count, and
+  unavailable-label count
 - if `EMBED_HTML_IMAGES` is set to `False`, the HTML report instead reuses
   relative image files from `html_assets/cartoons/`, so the whole output folder
   must be kept together

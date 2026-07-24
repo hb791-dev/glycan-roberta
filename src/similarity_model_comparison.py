@@ -72,6 +72,12 @@ h3 { font-size: 18px; }
 }
 .card { padding: 16px; }
 .plot-card { padding: 14px; }
+.plot-card a {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  cursor: zoom-in;
+}
 .plot-card img {
   display: block;
   width: 100%;
@@ -79,9 +85,32 @@ h3 { font-size: 18px; }
   border-radius: 12px;
   background: white;
 }
+.plot-hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
 .query-section {
   padding: 20px;
   margin: 22px 0;
+}
+.query-summary {
+  display: grid;
+  grid-template-columns: minmax(260px, 380px) 1fr;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+.venn-card {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px;
+}
+.venn-card svg {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 .query-head {
   display: grid;
@@ -131,6 +160,17 @@ h3 { font-size: 18px; }
 .badge.good { color: var(--good); border-color: rgba(31, 122, 77, 0.35); }
 .badge.warn { color: var(--warn); border-color: rgba(161, 92, 0, 0.35); }
 .badge.bad { color: var(--bad); border-color: rgba(161, 43, 43, 0.35); }
+.link-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.link-list a {
+  color: var(--accent);
+  font-weight: bold;
+  text-decoration: none;
+}
+.link-list a:hover { text-decoration: underline; }
 .neighbor-card {
   margin: 10px 0;
   padding: 12px;
@@ -175,7 +215,7 @@ th, td {
 th { background: #efe3cf; }
 @media (max-width: 760px) {
   header, .container { padding-left: 18px; padding-right: 18px; }
-  .query-head { grid-template-columns: 1fr; }
+  .query-head, .query-summary { grid-template-columns: 1fr; }
 }
 """
 
@@ -622,6 +662,85 @@ def build_threshold_cloud_size_summary(
     return pd.DataFrame(rows)
 
 
+def build_three_way_cloud_overlap_summary(
+    ranked_df: "pd.DataFrame",
+    thresholds: list[float],
+) -> "pd.DataFrame":
+    """Build Venn-style overlap counts for three model similarity clouds.
+
+    The overlap is computed by `corpus_accession`, which is the stable neighbor
+    ID from notebook 8. This table is only populated when exactly three model
+    runs are being compared.
+    """
+    model_meta_df = (
+        ranked_df[["model_id", "model_label", "model_order"]]
+        .drop_duplicates()
+        .sort_values("model_order")
+    )
+    if len(model_meta_df) != 3:
+        return pd.DataFrame()
+
+    model_ids = model_meta_df["model_id"].tolist()
+    model_labels = model_meta_df["model_label"].tolist()
+    rows = []
+
+    for query_accession, query_df in ranked_df.groupby("query_accession", sort=False):
+        for threshold in thresholds:
+            cloud_sets = {
+                model_id: set(
+                    query_df.loc[
+                        (query_df["model_id"] == model_id)
+                        & (query_df["cosine_similarity"] >= float(threshold)),
+                        "corpus_accession",
+                    ]
+                )
+                for model_id in model_ids
+            }
+
+            first_set = cloud_sets[model_ids[0]]
+            second_set = cloud_sets[model_ids[1]]
+            third_set = cloud_sets[model_ids[2]]
+            all_three = first_set & second_set & third_set
+            first_second_only = (first_set & second_set) - third_set
+            first_third_only = (first_set & third_set) - second_set
+            second_third_only = (second_set & third_set) - first_set
+            first_only = first_set - second_set - third_set
+            second_only = second_set - first_set - third_set
+            third_only = third_set - first_set - second_set
+
+            rows.append(
+                {
+                    "query_accession": query_accession,
+                    "threshold": float(threshold),
+                    "model_a_id": model_ids[0],
+                    "model_b_id": model_ids[1],
+                    "model_c_id": model_ids[2],
+                    "model_a_label": model_labels[0],
+                    "model_b_label": model_labels[1],
+                    "model_c_label": model_labels[2],
+                    "model_a_cloud_size": len(first_set),
+                    "model_b_cloud_size": len(second_set),
+                    "model_c_cloud_size": len(third_set),
+                    "a_only_count": len(first_only),
+                    "b_only_count": len(second_only),
+                    "c_only_count": len(third_only),
+                    "a_b_only_count": len(first_second_only),
+                    "a_c_only_count": len(first_third_only),
+                    "b_c_only_count": len(second_third_only),
+                    "all_three_count": len(all_three),
+                    "a_only_accessions_json": json.dumps(sorted(first_only)),
+                    "b_only_accessions_json": json.dumps(sorted(second_only)),
+                    "c_only_accessions_json": json.dumps(sorted(third_only)),
+                    "a_b_only_accessions_json": json.dumps(sorted(first_second_only)),
+                    "a_c_only_accessions_json": json.dumps(sorted(first_third_only)),
+                    "b_c_only_accessions_json": json.dumps(sorted(second_third_only)),
+                    "all_three_accessions_json": json.dumps(sorted(all_three)),
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
 def build_cloud_label_overlap_summary(
     ranked_df: "pd.DataFrame",
     label_lookup: dict[str, dict[str, dict[str, object]]],
@@ -796,7 +915,7 @@ def _render_labels(labels_json: str) -> str:
     """Render a compact list of labels as HTML badges."""
     labels = _parse_labels_json(labels_json)
     if not labels:
-        return '<span class="badge warn">no prepared label</span>'
+        return '<span class="badge warn">label unavailable</span>'
     return "".join(f'<span class="badge">{escape(label)}</span>' for label in labels)
 
 
@@ -809,12 +928,103 @@ def _render_relation_badge(relation: str) -> str:
         "no_label_overlap": "bad",
     }.get(relation, "")
     label = {
-        "exact_label_set": "exact label set",
-        "shared_label": "shares label",
-        "no_prepared_label": "no prepared label",
-        "no_label_overlap": "no label overlap",
+        "exact_label_set": "same full label set",
+        "shared_label": "partial label match",
+        "no_prepared_label": "label unavailable",
+        "no_label_overlap": "different prepared labels",
     }.get(relation, relation)
     return f'<span class="badge {badge_class}">{escape(label)}</span>'
+
+
+def _render_three_way_venn_svg(row: "pd.Series") -> str:
+    """Render a simple three-circle overlap diagram with exact region counts."""
+    label_a = str(row["model_a_label"])
+    label_b = str(row["model_b_label"])
+    label_c = str(row["model_c_label"])
+    threshold = float(row["threshold"])
+    a_size = int(row["model_a_cloud_size"])
+    b_size = int(row["model_b_cloud_size"])
+    c_size = int(row["model_c_cloud_size"])
+    a_only = int(row["a_only_count"])
+    b_only = int(row["b_only_count"])
+    c_only = int(row["c_only_count"])
+    a_b_only = int(row["a_b_only_count"])
+    a_c_only = int(row["a_c_only_count"])
+    b_c_only = int(row["b_c_only_count"])
+    all_three = int(row["all_three_count"])
+
+    return f"""
+<div class="venn-card">
+  <h3>Cloud accession overlap</h3>
+  <p class="subtle">Counts are accessions in each similarity cloud at threshold &gt;= {threshold:.2f}.</p>
+  <svg viewBox="0 0 520 360" role="img" aria-label="Three-way cloud overlap diagram">
+    <circle cx="215" cy="150" r="105" fill="#e9b44c" fill-opacity="0.42" stroke="#a15c00" stroke-width="2"></circle>
+    <circle cx="305" cy="150" r="105" fill="#4c9f70" fill-opacity="0.38" stroke="#1f7a4d" stroke-width="2"></circle>
+    <circle cx="260" cy="235" r="105" fill="#5f8cc0" fill-opacity="0.38" stroke="#2c5f8f" stroke-width="2"></circle>
+
+    <text x="128" y="42" font-size="13" font-weight="bold">{escape(label_a)}</text>
+    <text x="315" y="42" font-size="13" font-weight="bold">{escape(label_b)}</text>
+    <text x="202" y="345" font-size="13" font-weight="bold">{escape(label_c)}</text>
+
+    <text x="176" y="135" font-size="26" font-weight="bold" text-anchor="middle">{a_only}</text>
+    <text x="344" y="135" font-size="26" font-weight="bold" text-anchor="middle">{b_only}</text>
+    <text x="260" y="285" font-size="26" font-weight="bold" text-anchor="middle">{c_only}</text>
+    <text x="260" y="132" font-size="24" font-weight="bold" text-anchor="middle">{a_b_only}</text>
+    <text x="218" y="215" font-size="24" font-weight="bold" text-anchor="middle">{a_c_only}</text>
+    <text x="302" y="215" font-size="24" font-weight="bold" text-anchor="middle">{b_c_only}</text>
+    <text x="260" y="184" font-size="28" font-weight="bold" text-anchor="middle">{all_three}</text>
+  </svg>
+  <div class="badge-row">
+    <span class="badge">{escape(label_a)}: {a_size}</span>
+    <span class="badge">{escape(label_b)}: {b_size}</span>
+    <span class="badge">{escape(label_c)}: {c_size}</span>
+  </div>
+</div>
+"""
+
+
+def _render_query_label_consistency_table(
+    label_overlap_df: "pd.DataFrame",
+    query_accession: str,
+    cloud_threshold: float,
+) -> str:
+    """Render per-query cloud label-match rates for the HTML report."""
+    if label_overlap_df.empty:
+        return ""
+
+    query_label_df = label_overlap_df.loc[
+        (label_overlap_df["query_accession"] == query_accession)
+        & (label_overlap_df["threshold"].round(6) == round(float(cloud_threshold), 6))
+    ].copy()
+    if query_label_df.empty:
+        return ""
+
+    query_label_df = query_label_df.sort_values("model_order")
+    rows = []
+    for row in query_label_df.itertuples(index=False):
+        same_full_set_rate = float(row.exact_label_set_match_rate) * 100
+        partial_or_exact_rate = float(row.any_label_overlap_rate) * 100
+        rows.append(
+            "<tr>"
+            f"<td>{escape(str(row.model_label))}</td>"
+            f"<td>{int(row.cloud_size)}</td>"
+            f"<td>{int(row.labeled_neighbors)}</td>"
+            f"<td>{int(row.neighbors_without_labels)}</td>"
+            f"<td>{same_full_set_rate:.1f}%</td>"
+            f"<td>{partial_or_exact_rate:.1f}%</td>"
+            "</tr>"
+        )
+
+    return (
+        '<div class="venn-card">'
+        "<h3>Cloud label match rates</h3>"
+        f'<p class="subtle">Computed within this query cloud at threshold &gt;= {cloud_threshold:.2f}. '
+        "Unavailable labels are counted separately, not as wrong.</p>"
+        "<table><thead><tr><th>Model</th><th>Cloud</th><th>Labeled</th>"
+        "<th>Unavailable</th><th>Same full set</th><th>Partial/exact match</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+        "</div>"
+    )
 
 
 def _render_cartoon_image(
@@ -873,7 +1083,10 @@ def _render_plot_image(
     return (
         '<div class="plot-card">'
         f"<h3>{escape(title)}</h3>"
+        f'<a href="{escape(image_source)}" target="_blank" rel="noopener noreferrer">'
         f'<img src="{escape(image_source)}" alt="{escape(title)}">'
+        "</a>"
+        '<p class="plot-hint">Click plot to open larger.</p>'
         "</div>"
     )
 
@@ -895,6 +1108,7 @@ def render_similarity_comparison_html_report(
     all_vs_all_df = comparison_tables["all_vs_all_model_comparison"].sort_values("model_order")
     label_overlap_df = comparison_tables.get("cloud_label_overlap_model_comparison", pd.DataFrame())
     top_overlap_df = comparison_tables["top_neighbor_overlap_model_comparison"]
+    venn_overlap_df = comparison_tables.get("three_way_cloud_overlap_summary", pd.DataFrame())
 
     all_vs_all_rows = []
     for row in all_vs_all_df.itertuples(index=False):
@@ -982,6 +1196,20 @@ def render_similarity_comparison_html_report(
     for query_accession, query_df in gallery_table_df.groupby("query_accession", sort=False):
         first_row = query_df.iloc[0]
         query_labels_html = _render_labels(str(first_row["query_labels_json"]))
+        label_stats_html = _render_query_label_consistency_table(
+            label_overlap_df=label_overlap_df,
+            query_accession=query_accession,
+            cloud_threshold=cloud_threshold,
+        )
+        venn_html = ""
+        if not venn_overlap_df.empty:
+            query_venn_df = venn_overlap_df.loc[
+                (venn_overlap_df["query_accession"] == query_accession)
+                & (venn_overlap_df["threshold"].round(6) == round(float(cloud_threshold), 6))
+            ]
+            if not query_venn_df.empty:
+                venn_html = _render_three_way_venn_svg(query_venn_df.iloc[0])
+
         query_cartoon_html = _render_cartoon_image(
             str(first_row["query_cartoon_path"]),
             output_path,
@@ -1032,6 +1260,7 @@ def render_similarity_comparison_html_report(
         query_sections.append(
             '<section class="query-section">'
             f"<h2>Query {escape(str(query_accession))}</h2>"
+            '<div class="query-summary">'
             '<div class="query-head">'
             f"{query_cartoon_html}"
             "<div>"
@@ -1040,6 +1269,9 @@ def render_similarity_comparison_html_report(
             "</div>"
             f'<div class="sequence">{escape(str(first_row["query_sequence"]))}</div>'
             "</div>"
+            "</div>"
+            f"{venn_html}"
+            f"{label_stats_html}"
             "</div>"
             '<div class="model-grid">'
             f"{''.join(model_columns)}"
@@ -1065,10 +1297,18 @@ def render_similarity_comparison_html_report(
       <div class="card">
         <h3>What this report checks</h3>
         <p>Do different model states retrieve the same glycan neighborhoods, and do those neighborhoods look semantically meaningful by subtype labels and cartoons?</p>
+        <div class="link-list"><a href="index.html">Open model similarity comparison index</a></div>
       </div>
       <div class="card">
         <h3>Gallery settings</h3>
         <p>Cloud threshold: <strong>>= {cloud_threshold:.2f}</strong><br>Neighbors shown per query/model: <strong>{top_n_neighbors}</strong></p>
+      </div>
+      <div class="card">
+        <h3>Badge meanings</h3>
+        <p><strong>Same full label set</strong>: neighbor labels exactly match the query labels.</p>
+        <p><strong>Partial label match</strong>: at least one label overlaps, but the full set differs.</p>
+        <p><strong>Label unavailable</strong>: no usable prepared GlycoMotif subtype label was available for that neighbor.</p>
+        <p><strong>Different prepared labels</strong>: both glycans have labels, but none overlap.</p>
       </div>
     </div>
 
@@ -1099,6 +1339,97 @@ def render_similarity_comparison_html_report(
 """
     html_path.write_text(html, encoding="utf-8")
     return str(html_path)
+
+
+def _render_output_link(path: str | Path, output_dir: Path, label: str) -> str:
+    """Render a relative link for an output file when possible."""
+    if not str(path):
+        return ""
+
+    file_path = Path(path)
+    link_target = _relative_path(file_path, output_dir) if file_path.exists() else str(path)
+    return f'<a href="{escape(link_target)}">{escape(label)}</a>'
+
+
+def render_similarity_comparison_index_html(
+    output_dir: str | Path,
+    report_title: str,
+    table_paths: dict[str, str],
+    plot_paths: dict[str, object],
+    manifest_path: str | Path,
+    config_path: str | Path,
+) -> str:
+    """Render a compact index page for the model-comparison output folder."""
+    output_path = Path(output_dir)
+    index_path = output_path / "index.html"
+
+    main_links = [
+        _render_output_link(
+            plot_paths.get("html_report_path", ""),
+            output_path,
+            "Open full visual comparison report",
+        ),
+        _render_output_link(manifest_path, output_path, "Open output manifest JSON"),
+        _render_output_link(config_path, output_path, "Open comparison config JSON"),
+    ]
+    main_links_html = "".join(f"<div>{link}</div>" for link in main_links if link)
+
+    plot_links = [
+        _render_output_link(plot_paths.get("all_vs_all_plot", ""), output_path, "All-vs-all summary plot"),
+        _render_output_link(plot_paths.get("specific_vs_all_plot", ""), output_path, "Specific-vs-all query median plot"),
+    ]
+    threshold_plot_paths = plot_paths.get("threshold_cloud_size_plots", {})
+    if isinstance(threshold_plot_paths, dict):
+        for threshold_label, plot_path in threshold_plot_paths.items():
+            plot_links.append(
+                _render_output_link(
+                    plot_path,
+                    output_path,
+                    f"Cloud-size plot {threshold_label}",
+                )
+            )
+    plot_links_html = "".join(f"<div>{link}</div>" for link in plot_links if link)
+
+    table_links = [
+        _render_output_link(table_path, output_path, table_name)
+        for table_name, table_path in sorted(table_paths.items())
+    ]
+    table_links_html = "".join(f"<div>{link}</div>" for link in table_links if link)
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(report_title)} index</title>
+  <style>{HTML_STYLE}</style>
+</head>
+<body>
+  <header>
+    <h1>{escape(report_title)} index</h1>
+    <p class="subtle">Landing page for the reusable model similarity comparison outputs.</p>
+  </header>
+  <main class="container">
+    <div class="summary-grid">
+      <div class="card">
+        <h3>Main files</h3>
+        <div class="link-list">{main_links_html}</div>
+      </div>
+      <div class="card">
+        <h3>Plots</h3>
+        <div class="link-list">{plot_links_html}</div>
+      </div>
+      <div class="card">
+        <h3>Tables</h3>
+        <div class="link-list">{table_links_html}</div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
+"""
+    index_path.write_text(html, encoding="utf-8")
+    return str(index_path)
 
 
 def build_similarity_model_comparison(
@@ -1135,6 +1466,10 @@ def build_similarity_model_comparison(
             top_k=top_k_neighbors,
         ),
         "threshold_cloud_overlap_model_comparison": build_threshold_cloud_overlap(
+            loaded_tables["specific_vs_all_ranked"],
+            thresholds=cloud_thresholds,
+        ),
+        "three_way_cloud_overlap_summary": build_three_way_cloud_overlap_summary(
             loaded_tables["specific_vs_all_ranked"],
             thresholds=cloud_thresholds,
         ),
@@ -1186,6 +1521,7 @@ def build_similarity_model_comparison(
     )
     plot_paths["html_report_path"] = html_report_path
 
+    manifest_path = output_path / "similarity_model_comparison_manifest.json"
     manifest = {
         "output_dir": str(output_path),
         "table_paths": saved_table_paths,
@@ -1201,7 +1537,18 @@ def build_similarity_model_comparison(
         "report_title": report_title,
         "embed_html_images": bool(embed_html_images),
     }
-    manifest_path = output_path / "similarity_model_comparison_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    html_index_path = render_similarity_comparison_index_html(
+        output_dir=output_path,
+        report_title=report_title,
+        table_paths=saved_table_paths,
+        plot_paths=plot_paths,
+        manifest_path=manifest_path,
+        config_path=output_path / "similarity_model_comparison_config.json",
+    )
+    plot_paths["html_index_path"] = html_index_path
+    manifest["plot_paths"] = plot_paths
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     return {
