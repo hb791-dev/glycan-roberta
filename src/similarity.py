@@ -48,7 +48,9 @@ from src.similarity_scaleup import (
     validate_scaleup_similarity_inputs,
 )
 from src.similarity_variants import (
+    DEFAULT_VARIANT_MODEL_SUITE,
     VARIANT_SET_ORDER,
+    build_variant_model_run_specs,
     _humanize_label,
     _normalize_variant_set_name,
     _sort_variant_results,
@@ -57,10 +59,12 @@ from src.similarity_variants import (
     build_anchor_similarity_matrices,
     build_variant_summary_tables,
     compare_anchor_variants,
+    export_public_variant_html,
     plot_variant_similarity_histogram,
     render_anchor_similarity_html,
     render_variant_index_html,
     run_variant_similarity_analysis,
+    run_variant_similarity_model_suite,
     save_variant_similarity_outputs,
     validate_variant_similarity_inputs,
 )

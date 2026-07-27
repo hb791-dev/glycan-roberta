@@ -288,13 +288,16 @@ Main outputs:
 
 Purpose:
 - compare glycan sequence embeddings from one saved model checkpoint at a time
-- choose one `best_model/` folder in Drive in a single `MODEL_DIR` cell
+- choose one tokenizer family and pretrained experiment in Drive, then build one
+  run suite across the saved MLM checkpoint plus the saved classifier runs
 - define small manual anchor-and-variant review sets directly in the notebook
 - score anchor-to-variant cosine similarity and rank variants within each set
 - inspect tokenization alongside similarity results
 - summarize similarity distributions with histograms across all 9 variants in each anchor group
 - make the overall within-anchor order explicit with a single 1-to-9 rank
 - build HTML reports with glycan cartoons for anchors and variants
+- optionally prepare a clean browser-facing public HTML export in Drive before
+  copying it into `public_reports/`
 
 Main outputs:
 - `variant_similarity_results.csv`
@@ -312,7 +315,9 @@ Notes:
 - glycan cartoon lookup and generic cartoon HTML helpers live in `src/glycan_cartoons.py`
 - the notebook saves outputs under `results/similarity/`
 - similarity results follow the same nested pattern as the other evaluation notebooks:
-  `results/similarity/<tokenizer_family>/<experiment_name>/`
+  `results/similarity/<tokenizer_family>/<experiment_name>/<run_label>/`
+- classification-backed variant runs are nested under:
+  `results/similarity/classification/<tokenizer_family>/<experiment_name>/<classifier_run_label>/<run_label>/`
 - this notebook is not split-specific evaluation: it does not automatically load
   only the train, validation, or test set
 - the selected checkpoint may come from a run associated with a dataset split,
@@ -322,6 +327,12 @@ Notes:
   whole-test-set similarity sweeps
 - the current notebook emphasizes all-variant histograms and one overall 1-to-9
   anchor ranking rather than heatmap-style visualization
+- the default notebook-7 suite is designed to run the same manual review across
+  the pretrained MLM, the classifier fine-tuned from MLM init, and the
+  classifier fine-tuned from random init for the chosen tokenizer family
+- when public export is enabled, the notebook writes browser-facing HTML into a
+  Drive review folder before you copy the final subset into
+  `public_reports/similarity/`
 
 ### `08_similarity_scaleup.ipynb`
 

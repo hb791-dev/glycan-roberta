@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from html import escape
 import json
 from pathlib import Path
+import shutil
 from typing import TYPE_CHECKING
 
 import torch
@@ -25,9 +26,15 @@ from src.similarity_core import (
     _image_path_to_data_uri,
     build_tokenization_preview,
     build_variant_preview_sequences,
+    load_similarity_artifacts,
     run_similarity_analysis as run_curated_pair_similarity_analysis,
     embed_sequences,
     similarity_matrix_dataframe,
+)
+from src.similarity_scaleup import (
+    _iter_local_html_references,
+    _resolve_local_export_reference,
+    _scan_text_for_sensitive_strings,
 )
 
 if TYPE_CHECKING:
@@ -39,6 +46,26 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 VARIANT_SET_ORDER = ("linkage", "monosaccharide", "branch_terminal")
+
+DEFAULT_VARIANT_MODEL_SUITE = (
+    {
+        "model_id": "pretrained_mlm",
+        "model_label": "Pretrained MLM",
+        "checkpoint_source": "pretraining",
+    },
+    {
+        "model_id": "classification_mlm_init",
+        "model_label": "Classifier, MLM init",
+        "checkpoint_source": "classification",
+        "classifier_run_label_key": "classifier_mlm_run_label",
+    },
+    {
+        "model_id": "classification_random_init",
+        "model_label": "Classifier, random init",
+        "checkpoint_source": "classification",
+        "classifier_run_label_key": "classifier_random_run_label",
+    },
+)
 
 def _normalize_variant_set_name(variant_set: str) -> str:
     """Normalize a variant-set label so small naming differences sort together."""
@@ -71,6 +98,92 @@ def _sort_variant_results(df: "pd.DataFrame") -> "pd.DataFrame":
         kind="stable",
     )
     return sortable.drop(columns=["_variant_set_order", "_variant_set_name"]).reset_index(drop=True)
+
+
+def build_variant_model_run_specs(
+    checkpoints_dir,
+    similarity_results_dir,
+    tokenizer_family: str,
+    experiment_name: str,
+    output_run_label: str,
+    report_title: str = "Variant Similarity Report",
+    model_subdir: str = "best_model",
+    classifier_mlm_run_label: str | None = None,
+    classifier_random_run_label: str | None = None,
+    suite_template: Sequence[dict] | None = None,
+) -> list[dict[str, str | Path]]:
+    """Return one notebook-7 run spec per selected model state.
+
+    The default suite mirrors the common comparison setup used elsewhere in the
+    project: one pretrained MLM checkpoint plus the MLM-initialized and
+    random-init classifier checkpoints for the same tokenizer family.
+    """
+    checkpoints_root = Path(checkpoints_dir)
+    similarity_root = Path(similarity_results_dir)
+    suite_rows = list(suite_template or DEFAULT_VARIANT_MODEL_SUITE)
+    run_specs: list[dict[str, str | Path]] = []
+
+    classifier_run_label_lookup = {
+        "classifier_mlm_run_label": str(classifier_mlm_run_label or "").strip(),
+        "classifier_random_run_label": str(classifier_random_run_label or "").strip(),
+    }
+
+    for suite_row in suite_rows:
+        checkpoint_source = str(suite_row["checkpoint_source"]).strip()
+        model_id = str(suite_row["model_id"]).strip()
+        model_label = str(suite_row["model_label"]).strip()
+
+        if checkpoint_source == "classification":
+            classifier_run_label_key = str(suite_row.get("classifier_run_label_key", "")).strip()
+            classifier_run_label = classifier_run_label_lookup.get(classifier_run_label_key, "")
+            if not classifier_run_label:
+                continue
+
+            model_dir = (
+                checkpoints_root
+                / "classification"
+                / str(tokenizer_family)
+                / str(experiment_name)
+                / classifier_run_label
+                / str(model_subdir)
+            )
+            output_dir = (
+                similarity_root
+                / "classification"
+                / str(tokenizer_family)
+                / str(experiment_name)
+                / classifier_run_label
+                / str(output_run_label)
+            )
+            report_subtitle = (
+                f"Model run: {tokenizer_family} tokenizer | {experiment_name} | "
+                f"{classifier_run_label} (classification fine-tuned)"
+            )
+            path_parts = ["classification", str(tokenizer_family), str(experiment_name), classifier_run_label]
+        elif checkpoint_source == "pretraining":
+            model_dir = checkpoints_root / str(tokenizer_family) / str(experiment_name) / str(model_subdir)
+            output_dir = similarity_root / str(tokenizer_family) / str(experiment_name) / str(output_run_label)
+            report_subtitle = f"Model run: {tokenizer_family} tokenizer | {experiment_name} (MLM checkpoint)"
+            path_parts = [str(tokenizer_family), str(experiment_name)]
+        else:
+            raise ValueError(f"Unsupported checkpoint_source in suite row: {checkpoint_source!r}")
+
+        run_specs.append(
+            {
+                "model_id": model_id,
+                "model_label": model_label,
+                "checkpoint_source": checkpoint_source,
+                "classifier_run_label": classifier_run_label if checkpoint_source == "classification" else "",
+                "model_dir": model_dir,
+                "output_dir": output_dir,
+                "output_name": f"{report_title} - {model_label}",
+                "output_run_label": str(output_run_label),
+                "report_subtitle": report_subtitle,
+                "public_report_subdir": "/".join(["public_reports", "similarity"] + path_parts + [str(output_run_label)]),
+            }
+        )
+
+    return run_specs
 
 
 # ---------------------------------------------------------------------------
@@ -932,4 +1045,210 @@ def run_variant_similarity_analysis(
         "preview_sequences": preview_sequences,
         "saved_paths": saved_paths,
         "config_payload": config_payload,
+    }
+
+
+def run_variant_similarity_model_suite(
+    model_specs: Sequence[dict],
+    variant_records: Sequence[dict],
+    developer_email: str | None = None,
+    cartoon_image_format: str = "svg",
+    cartoon_display: str = "compact",
+    lookup_timeout: int = 60,
+    max_length: int | None = None,
+    batch_size: int = 32,
+) -> dict[str, dict]:
+    """Run notebook-7 variant analysis across multiple saved model checkpoints.
+
+    Each run spec is expected to carry at least:
+    - ``model_id``
+    - ``model_label``
+    - ``model_dir``
+    - ``output_dir``
+    - ``output_name``
+
+    The helper loads one checkpoint at a time so Colab/local GPU memory usage
+    stays predictable when sweeping multiple models for the same tokenizer.
+    """
+    suite_results: dict[str, dict] = {}
+
+    for model_spec in model_specs:
+        model_id = str(model_spec["model_id"])
+        model_dir = Path(model_spec["model_dir"])
+        output_dir = Path(model_spec["output_dir"])
+        output_name = str(model_spec.get("output_name") or model_spec.get("model_label") or model_id)
+
+        validate_variant_similarity_inputs(
+            model_dir=model_dir,
+            variant_records=variant_records,
+            output_dir=output_dir,
+        )
+
+        tokenizer, model, device = load_similarity_artifacts(str(model_dir))
+        try:
+            suite_results[model_id] = {
+                "model_spec": dict(model_spec),
+                "results_bundle": run_variant_similarity_analysis(
+                    tokenizer=tokenizer,
+                    model=model,
+                    variant_records=variant_records,
+                    output_dir=output_dir,
+                    output_name=output_name,
+                    developer_email=developer_email,
+                    cartoon_image_format=cartoon_image_format,
+                    cartoon_display=cartoon_display,
+                    lookup_timeout=lookup_timeout,
+                    device=device,
+                    max_length=max_length,
+                    batch_size=batch_size,
+                    model_dir=model_dir,
+                ),
+            }
+        finally:
+            del model
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+
+    return suite_results
+
+
+def export_public_variant_html(
+    results_bundle: dict | None = None,
+    saved_paths: dict | None = None,
+    export_dir=None,
+    repo_public_subdir: str | None = None,
+    repo_owner: str | None = None,
+    repo_name: str | None = None,
+    repo_ref: str = "main",
+    extra_blocked_strings: Sequence[str] | None = None,
+) -> dict:
+    """Copy a clean, browser-facing subset of notebook-7 HTML into one folder.
+
+    The variant-analysis HTML is already mostly standalone because histograms and
+    cached cartoons are embedded as data URIs, but this helper still:
+    - copies the HTML index plus anchor pages into one export folder
+    - follows any future relative asset links automatically
+    - scans copied text files for obvious local or personal strings
+    """
+    import pandas as pd
+
+    source_saved_paths = saved_paths if saved_paths is not None else (results_bundle or {}).get("saved_paths")
+    if source_saved_paths is None:
+        raise ValueError("Provide either results_bundle or saved_paths when exporting public HTML.")
+    if export_dir is None:
+        raise ValueError("export_dir is required for export_public_variant_html().")
+
+    html_dir = Path(source_saved_paths["html_dir"]).resolve()
+    export_path = Path(export_dir)
+    export_path.mkdir(parents=True, exist_ok=True)
+
+    initial_source_paths = [Path(source_saved_paths["index_html_path"]).resolve()]
+    initial_source_paths.extend(Path(path).resolve() for path in source_saved_paths.get("anchor_html_paths", {}).values())
+
+    pending_relative_paths: list[Path] = []
+    for source_path in initial_source_paths:
+        try:
+            pending_relative_paths.append(source_path.relative_to(html_dir))
+        except ValueError as error:
+            raise ValueError(f"HTML export path is outside the saved html_dir: {source_path}") from error
+
+    copied_file_rows: list[dict[str, str]] = []
+    dependency_issue_rows: list[dict[str, str]] = []
+    scan_rows: list[dict[str, str]] = []
+    seen_relative_paths: set[str] = set()
+
+    while pending_relative_paths:
+        relative_path = Path(pending_relative_paths.pop(0))
+        relative_key = relative_path.as_posix()
+        if relative_key in seen_relative_paths:
+            continue
+        seen_relative_paths.add(relative_key)
+
+        source_path = (html_dir / relative_path).resolve()
+        if not source_path.exists():
+            dependency_issue_rows.append(
+                {
+                    "reference_path": relative_key,
+                    "issue_type": "missing_source_file",
+                    "source_html": "",
+                }
+            )
+            continue
+
+        target_path = export_path / relative_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        copied_file_rows.append(
+            {
+                "relative_path": relative_key,
+                "source_path": str(source_path),
+                "export_path": str(target_path),
+            }
+        )
+
+        if source_path.suffix.lower() not in {".html", ".htm", ".css", ".js", ".txt"}:
+            continue
+
+        text = source_path.read_text(encoding="utf-8")
+        scan_rows.extend(
+            _scan_text_for_sensitive_strings(
+                text=text,
+                source_name=relative_key,
+                extra_blocked_strings=extra_blocked_strings,
+            )
+        )
+
+        if source_path.suffix.lower() not in {".html", ".htm"}:
+            continue
+
+        for reference in _iter_local_html_references(text):
+            resolved_dependency = _resolve_local_export_reference(
+                source_path=source_path,
+                reference=reference,
+                html_root_dir=html_dir,
+            )
+            if resolved_dependency is None:
+                dependency_issue_rows.append(
+                    {
+                        "reference_path": reference,
+                        "issue_type": "missing_or_external_reference",
+                        "source_html": relative_key,
+                    }
+                )
+                continue
+
+            dependency_relative_path = resolved_dependency.relative_to(html_dir)
+            dependency_key = dependency_relative_path.as_posix()
+            if dependency_key not in seen_relative_paths:
+                pending_relative_paths.append(dependency_relative_path)
+
+    copied_files_df = pd.DataFrame(copied_file_rows)
+    dependency_issues_df = pd.DataFrame(dependency_issue_rows)
+    scan_results_df = pd.DataFrame(scan_rows)
+
+    index_relative_path = "index.html"
+    if copied_file_rows:
+        for row in copied_file_rows:
+            if row["relative_path"].endswith("/index.html") or row["relative_path"] == "index.html":
+                index_relative_path = row["relative_path"]
+                break
+
+    repo_index_path = ""
+    githack_url = ""
+    if repo_public_subdir and repo_owner and repo_name:
+        repo_index_path = f"{str(repo_public_subdir).strip('/')}/{index_relative_path}".strip("/")
+        githack_url = f"https://raw.githack.com/{repo_owner}/{repo_name}/{repo_ref}/{repo_index_path}"
+
+    return {
+        "public_export_dir": export_path,
+        "copied_files_df": copied_files_df,
+        "dependency_issues_df": dependency_issues_df,
+        "scan_results_df": scan_results_df,
+        "has_dependency_issues": not dependency_issues_df.empty,
+        "has_sensitive_matches": not scan_results_df.empty,
+        "repo_index_path": repo_index_path,
+        "githack_url": githack_url,
+        "repo_owner": repo_owner or "",
+        "repo_name": repo_name or "",
+        "repo_ref": repo_ref,
     }
