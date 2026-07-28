@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -51,6 +52,7 @@ HUGGINGFACE_FAST_PATTERN = (
 GLYBERTA_COMPACT_GLYCOLETTER_PATTERN = r"[ab?][0-9?]-[0-9?]|[\(\)\[\]]"
 
 SPECIAL_TOKENS = ["<s>", "<pad>", "</s>", "<unk>", "<mask>"]
+WORDLEVEL_STRATEGIES = {"linkage_block", "donor_bound", "semi_atomic"}
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,75 @@ def split_glycan_string(glycan_string: str):
     return [token.value for token in tokenize_compact_iupac(glycan_string)]
 
 
+def _split_linkage_parts(linkage_text: str) -> tuple[str, str]:
+    """Return donor and acceptor parts from one inline linkage token."""
+    match = INLINE_LINKAGE_PATTERN.fullmatch(linkage_text)
+    if not match:
+        raise ValueError(f"Unsupported linkage token: {linkage_text}")
+
+    donor_part = linkage_text[:2]
+    acceptor_part = linkage_text[2:]
+    return donor_part, acceptor_part
+
+
+def _split_with_strategy(glycan_string: str, strategy: str):
+    """Return strategy-specific tokens from the parsed glycan sequence."""
+    if strategy not in WORDLEVEL_STRATEGIES:
+        valid = ", ".join(sorted(WORDLEVEL_STRATEGIES))
+        raise ValueError(f"Unsupported tokenizer strategy: {strategy}. Choose from: {valid}")
+
+    parsed_tokens = tokenize_compact_iupac(glycan_string)
+    split_tokens = []
+    index = 0
+
+    while index < len(parsed_tokens):
+        current = parsed_tokens[index]
+        next_token = parsed_tokens[index + 1] if index + 1 < len(parsed_tokens) else None
+
+        if current.kind == "residue":
+            if next_token and next_token.kind == "linkage":
+                donor_part, acceptor_part = _split_linkage_parts(next_token.value)
+
+                if strategy == "linkage_block":
+                    split_tokens.append(f"{current.value}{next_token.value}")
+                elif strategy == "donor_bound":
+                    split_tokens.extend([f"{current.value}{donor_part}", acceptor_part])
+                elif strategy == "semi_atomic":
+                    split_tokens.extend([current.value, donor_part, acceptor_part])
+
+                index += 2
+                continue
+
+            if next_token and next_token.kind == "root_anomer":
+                if strategy in {"linkage_block", "donor_bound"}:
+                    split_tokens.append(f"{current.value}{next_token.value}")
+                else:
+                    split_tokens.extend([current.value, next_token.value])
+
+                index += 2
+                continue
+
+        split_tokens.append(current.value)
+        index += 1
+
+    return split_tokens
+
+
+def split_glycan_string_linkage_block(glycan_string: str):
+    """Tokenize compact IUPAC using Sugar+Linkage block units."""
+    return _split_with_strategy(glycan_string, "linkage_block")
+
+
+def split_glycan_string_donor_bound(glycan_string: str):
+    """Tokenize compact IUPAC using Sugar+Donor units plus acceptor tokens."""
+    return _split_with_strategy(glycan_string, "donor_bound")
+
+
+def split_glycan_string_semi_atomic(glycan_string: str):
+    """Tokenize compact IUPAC into residue, donor, and acceptor subunits."""
+    return _split_with_strategy(glycan_string, "semi_atomic")
+
+
 def split_glyberta_compact_string(glycan_string: str):
     """Split one compact glycan string with the GlyBERTa-style regex rule."""
     parts = re.split(f"({GLYBERTA_COMPACT_GLYCOLETTER_PATTERN})", glycan_string)
@@ -250,6 +321,70 @@ def audit_oov_tokens(
     summary_df = pd.DataFrame([summary])
 
     return summary_df, oov_df, examples_df
+
+
+def build_wordlevel_vocab_from_sequences(train_sequences, tokenize_function):
+    """Build a stable WordLevel vocabulary from one tokenization function."""
+    token_counts = Counter()
+    for sequence in train_sequences:
+        token_counts.update(tokenize_function(sequence))
+
+    vocab = {token: index for index, token in enumerate(SPECIAL_TOKENS)}
+    for token in sorted(token_counts.keys()):
+        if token not in vocab:
+            vocab[token] = len(vocab)
+
+    return vocab, token_counts
+
+
+def load_sequences_from_text(train_file: str) -> list[str]:
+    """Load one non-empty glycan sequence per line from disk."""
+    with open(train_file, "r", encoding="utf-8") as file:
+        sequences = [line.strip() for line in file if line.strip()]
+
+    if not sequences:
+        raise ValueError(f"No training sequences found in {train_file}")
+
+    return sequences
+
+
+def save_vocab_json(vocab: dict[str, int], output_path: str) -> None:
+    """Write a deterministic vocabulary JSON file."""
+    with open(output_path, "w", encoding="utf-8") as file:
+        json.dump(vocab, file, indent=2)
+
+
+def build_vocab_regex_from_wordlevel_vocab(vocab: dict[str, int]) -> str:
+    """Build a longest-first pre-tokenizer regex from non-special vocab tokens."""
+    non_special_tokens = [token for token in vocab if token not in SPECIAL_TOKENS]
+    non_special_tokens.sort(key=lambda token: (-len(token), token))
+    return "|".join(re.escape(token) for token in non_special_tokens)
+
+
+def create_wordlevel_fast_tokenizer(vocab: dict[str, int], pretokenizer_pattern: str):
+    """Wrap a fixed WordLevel vocabulary in a Hugging Face fast tokenizer."""
+    backend_tokenizer = Tokenizer(WordLevel(vocab=vocab, unk_token="<unk>"))
+    backend_tokenizer.pre_tokenizer = Split(
+        pattern=Regex(pretokenizer_pattern),
+        behavior="isolated",
+    )
+    backend_tokenizer.post_processor = RobertaProcessing(
+        sep=("</s>", backend_tokenizer.token_to_id("</s>")),
+        cls=("<s>", backend_tokenizer.token_to_id("<s>")),
+    )
+
+    hf_tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=backend_tokenizer,
+        bos_token="<s>",
+        eos_token="</s>",
+        sep_token="</s>",
+        cls_token="<s>",
+        unk_token="<unk>",
+        pad_token="<pad>",
+        mask_token="<mask>",
+    )
+
+    return backend_tokenizer, hf_tokenizer
 
 
 def inspect_tokenizer(tokenizer, sample_glycan: str, tokenizer_name: str = "Tokenizer") -> None:

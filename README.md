@@ -3,12 +3,15 @@
 This repository contains a workflow for pretraining and evaluating
 RoBERTa-style masked-language models on glycan sequences.
 
-The project compares four tokenizer strategies:
+The project compares seven tokenizer strategies:
 
 - `byte_bpe`
 - `glyberta`
 - `manual`
 - `hybrid_char_bpe`
+- `linkage_block`
+- `donor_bound`
+- `semi_atomic`
 
 The workflow is organized as a notebook pipeline with helper scripts in
 `src/`. Large artifacts such as dataset splits, trained tokenizers,
@@ -52,7 +55,10 @@ glycan-roberta/
 │   │   ├── 02a_byte_bpe_gen.ipynb
 │   │   ├── 02b_glyberta_gen.ipynb
 │   │   ├── 02c_manual_gen.ipynb
-│   │   └── 02d_hybrid_char_bpe_gen.ipynb
+│   │   ├── 02d_hybrid_char_bpe_gen.ipynb
+│   │   ├── 02e_linkage_block_gen.ipynb
+│   │   ├── 02f_donor_bound_gen.ipynb
+│   │   └── 02g_semi_atomic_gen.ipynb
 │   ├── 03_dataset_preprocessing.ipynb
 │   ├── 04_roberta_pretraining.ipynb
 │   ├── 05_validation_diagnostics.ipynb
@@ -106,17 +112,26 @@ MyDrive/ProjectRoot/
 │   ├── byte_bpe/
 │   ├── glyberta/
 │   ├── hybrid_char_bpe/
+│   ├── linkage_block/
+│   ├── donor_bound/
+│   ├── semi_atomic/
 │   └── manual/
 ├── tokenized_datasets/
 │   ├── byte_bpe/
 │   ├── glyberta/
 │   ├── hybrid_char_bpe/
+│   ├── linkage_block/
+│   ├── donor_bound/
+│   ├── semi_atomic/
 │   └── manual/
 ├── checkpoints/
 │   ├── byte_bpe/
 │   ├── classification/
 │   ├── glyberta/
 │   ├── hybrid_char_bpe/
+│   ├── linkage_block/
+│   ├── donor_bound/
+│   ├── semi_atomic/
 │   └── manual/
 ├── results/
 │   ├── exploration/
@@ -203,6 +218,45 @@ Purpose:
 Main outputs:
 - tokenizer files
 - merges and vocab
+- inspection preview
+- tokenizer configuration summary
+
+### `02e_linkage_block_gen.ipynb`
+
+Purpose:
+- build a rule-based linkage-block tokenizer from the training split
+- bundle each donor sugar and full glycosidic linkage into one token when a
+  linkage is present
+
+Main outputs:
+- tokenizer files
+- vocab
+- inspection preview
+- tokenizer configuration summary
+
+### `02f_donor_bound_gen.ipynb`
+
+Purpose:
+- build a rule-based donor-bound tokenizer from the training split
+- keep donor sugar plus anomer-plus-donor-carbon together while splitting the
+  acceptor carbon into its own token
+
+Main outputs:
+- tokenizer files
+- vocab
+- inspection preview
+- tokenizer configuration summary
+
+### `02g_semi_atomic_gen.ipynb`
+
+Purpose:
+- build a rule-based semi-atomic tokenizer from the training split
+- separate residue identity, donor configuration, and acceptor site into
+  smaller reusable tokens
+
+Main outputs:
+- tokenizer files
+- vocab
 - inspection preview
 - tokenizer configuration summary
 
@@ -594,6 +648,9 @@ Current tokenizer settings in this rebuild:
 - `glyberta`: `v1_train_only`
 - `manual`: `v1_train_only`
 - `hybrid_char_bpe`: `v70_m2`
+- `linkage_block`: `v1_train_only`
+- `donor_bound`: `v1_train_only`
+- `semi_atomic`: `v1_train_only`
 
 These labels are used consistently across:
 - tokenizer folders
