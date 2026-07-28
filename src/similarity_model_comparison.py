@@ -686,6 +686,80 @@ def build_top_neighbor_overlap(
     return pd.DataFrame(rows)
 
 
+def build_three_way_top_neighbor_overlap_summary(
+    ranked_df: "pd.DataFrame",
+    top_k: int = 25,
+) -> "pd.DataFrame":
+    """Build Venn-style overlap counts for matched top-k neighborhoods.
+
+    This avoids comparing models at one fixed cosine cutoff. Each model
+    contributes the same number of nearest neighbors for each query glycan.
+    """
+    model_meta_df = (
+        ranked_df[["model_id", "model_label", "model_order"]]
+        .drop_duplicates()
+        .sort_values("model_order")
+    )
+    if len(model_meta_df) != 3:
+        return pd.DataFrame()
+
+    model_ids = model_meta_df["model_id"].tolist()
+    model_labels = model_meta_df["model_label"].tolist()
+    top_df = ranked_df.loc[ranked_df["rank"] <= int(top_k)].copy()
+    rows = []
+
+    for query_accession, query_df in top_df.groupby("query_accession", sort=False):
+        neighbor_sets = {
+            model_id: set(
+                query_df.loc[query_df["model_id"] == model_id, "corpus_accession"]
+            )
+            for model_id in model_ids
+        }
+
+        first_set = neighbor_sets[model_ids[0]]
+        second_set = neighbor_sets[model_ids[1]]
+        third_set = neighbor_sets[model_ids[2]]
+        all_three = first_set & second_set & third_set
+        first_second_only = (first_set & second_set) - third_set
+        first_third_only = (first_set & third_set) - second_set
+        second_third_only = (second_set & third_set) - first_set
+        first_only = first_set - second_set - third_set
+        second_only = second_set - first_set - third_set
+        third_only = third_set - first_set - second_set
+
+        rows.append(
+            {
+                "query_accession": query_accession,
+                "top_k": int(top_k),
+                "model_a_id": model_ids[0],
+                "model_b_id": model_ids[1],
+                "model_c_id": model_ids[2],
+                "model_a_label": model_labels[0],
+                "model_b_label": model_labels[1],
+                "model_c_label": model_labels[2],
+                "model_a_top_k_size": len(first_set),
+                "model_b_top_k_size": len(second_set),
+                "model_c_top_k_size": len(third_set),
+                "a_only_count": len(first_only),
+                "b_only_count": len(second_only),
+                "c_only_count": len(third_only),
+                "a_b_only_count": len(first_second_only),
+                "a_c_only_count": len(first_third_only),
+                "b_c_only_count": len(second_third_only),
+                "all_three_count": len(all_three),
+                "a_only_accessions_json": json.dumps(sorted(first_only)),
+                "b_only_accessions_json": json.dumps(sorted(second_only)),
+                "c_only_accessions_json": json.dumps(sorted(third_only)),
+                "a_b_only_accessions_json": json.dumps(sorted(first_second_only)),
+                "a_c_only_accessions_json": json.dumps(sorted(first_third_only)),
+                "b_c_only_accessions_json": json.dumps(sorted(second_third_only)),
+                "all_three_accessions_json": json.dumps(sorted(all_three)),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def build_threshold_cloud_overlap(
     ranked_df: "pd.DataFrame",
     thresholds: list[float],
@@ -919,6 +993,78 @@ def build_cloud_label_overlap_summary(
     return pd.DataFrame(rows)
 
 
+def build_top_neighbor_label_overlap_summary(
+    ranked_df: "pd.DataFrame",
+    label_lookup: dict[str, dict[str, dict[str, object]]],
+    top_k: int = 25,
+) -> "pd.DataFrame":
+    """Measure label consistency inside matched top-k neighborhoods.
+
+    Each model contributes the same number of nearest neighbors, so this table
+    compares semantic quality without depending on one shared cosine threshold.
+    """
+    by_accession = label_lookup["by_accession"]
+    by_sequence = label_lookup["by_sequence"]
+    top_df = ranked_df.loc[ranked_df["rank"] <= int(top_k)].copy()
+    rows = []
+
+    for (model_id, model_label, model_order, query_accession), query_df in top_df.groupby(
+        ["model_id", "model_label", "model_order", "query_accession"],
+        sort=False,
+    ):
+        query_sequence = str(query_df["query_sequence"].iloc[0])
+        query_record = by_accession.get(str(query_accession)) or by_sequence.get(query_sequence)
+        query_labels = set(query_record["label_set"]) if query_record else set()
+
+        exact_label_set_matches = 0
+        any_label_overlap = 0
+        no_label_overlap = 0
+        neighbors_without_labels = 0
+
+        for row in query_df.itertuples(index=False):
+            corpus_accession = str(getattr(row, "corpus_accession"))
+            corpus_sequence = str(getattr(row, "corpus_sequence"))
+            corpus_record = by_accession.get(corpus_accession) or by_sequence.get(corpus_sequence)
+            corpus_labels = set(corpus_record["label_set"]) if corpus_record else set()
+
+            if not corpus_labels:
+                neighbors_without_labels += 1
+            elif corpus_labels == query_labels:
+                exact_label_set_matches += 1
+                any_label_overlap += 1
+            elif query_labels & corpus_labels:
+                any_label_overlap += 1
+            else:
+                no_label_overlap += 1
+
+        neighborhood_size = len(query_df)
+        labeled_neighbors = neighborhood_size - neighbors_without_labels
+        rows.append(
+            {
+                "model_id": model_id,
+                "model_label": model_label,
+                "model_order": int(model_order),
+                "query_accession": query_accession,
+                "top_k": int(top_k),
+                "query_labels_json": json.dumps(sorted(query_labels)),
+                "neighborhood_size": int(neighborhood_size),
+                "labeled_neighbors": int(labeled_neighbors),
+                "neighbors_without_labels": int(neighbors_without_labels),
+                "exact_label_set_matches": int(exact_label_set_matches),
+                "any_label_overlap": int(any_label_overlap),
+                "no_label_overlap": int(no_label_overlap),
+                "exact_label_set_match_rate": (
+                    exact_label_set_matches / labeled_neighbors if labeled_neighbors else float("nan")
+                ),
+                "any_label_overlap_rate": (
+                    any_label_overlap / labeled_neighbors if labeled_neighbors else float("nan")
+                ),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def build_classification_exact_match_summary(
     run_specs: list[dict[str, str | Path]],
 ) -> "pd.DataFrame":
@@ -1008,16 +1154,16 @@ def build_html_neighbor_gallery_table(
     ranked_df: "pd.DataFrame",
     label_lookup: dict[str, dict[str, dict[str, object]]] | None,
     cartoon_lookup: dict[str, dict[str, str]],
-    cloud_threshold: float,
+    membership_top_k: int,
     top_n_neighbors: int,
 ) -> "pd.DataFrame":
     """Build the small neighbor table used by the HTML gallery report."""
-    cloud_membership: dict[tuple[str, str], set[str]] = {}
-    threshold_df = ranked_df.loc[ranked_df["cosine_similarity"] >= float(cloud_threshold)].copy()
+    top_k_membership: dict[tuple[str, str], set[str]] = {}
+    membership_df = ranked_df.loc[ranked_df["rank"] <= int(membership_top_k)].copy()
 
-    for row in threshold_df.itertuples(index=False):
-        key = (str(getattr(row, "query_accession")), str(getattr(row, "corpus_sequence")))
-        cloud_membership.setdefault(key, set()).add(str(getattr(row, "model_label")))
+    for row in membership_df.itertuples(index=False):
+        key = (str(getattr(row, "query_accession")), str(getattr(row, "corpus_accession")))
+        top_k_membership.setdefault(key, set()).add(str(getattr(row, "model_label")))
 
     rows = []
     top_df = ranked_df.loc[ranked_df["rank"] <= int(top_n_neighbors)].copy()
@@ -1031,7 +1177,7 @@ def build_html_neighbor_gallery_table(
         neighbor_labels = _lookup_labels(label_lookup, corpus_accession, corpus_sequence)
         neighbor_cartoon = _lookup_cartoon(cartoon_lookup, corpus_accession, corpus_sequence)
         query_cartoon = _lookup_cartoon(cartoon_lookup, query_accession, query_sequence)
-        in_models = sorted(cloud_membership.get((query_accession, corpus_sequence), set()))
+        in_models = sorted(top_k_membership.get((query_accession, corpus_accession), set()))
 
         rows.append(
             {
@@ -1054,7 +1200,7 @@ def build_html_neighbor_gallery_table(
                 "neighbor_labels_json": json.dumps(sorted(neighbor_labels)),
                 "label_relation": _label_relation(query_labels, neighbor_labels),
                 "neighbor_cartoon_path": neighbor_cartoon["image_path"] if neighbor_cartoon else "",
-                "in_models_at_threshold_json": json.dumps(in_models),
+                "in_models_in_top_k_json": json.dumps(in_models),
             }
         )
 
@@ -1133,18 +1279,65 @@ def _render_three_way_venn_svg(row: "pd.Series") -> str:
 """
 
 
+def _render_three_way_top_k_venn_svg(row: "pd.Series") -> str:
+    """Render a three-circle overlap diagram for matched top-k neighbors."""
+    label_a = str(row["model_a_label"])
+    label_b = str(row["model_b_label"])
+    label_c = str(row["model_c_label"])
+    top_k = int(row["top_k"])
+    a_size = int(row["model_a_top_k_size"])
+    b_size = int(row["model_b_top_k_size"])
+    c_size = int(row["model_c_top_k_size"])
+    a_only = int(row["a_only_count"])
+    b_only = int(row["b_only_count"])
+    c_only = int(row["c_only_count"])
+    a_b_only = int(row["a_b_only_count"])
+    a_c_only = int(row["a_c_only_count"])
+    b_c_only = int(row["b_c_only_count"])
+    all_three = int(row["all_three_count"])
+
+    return f"""
+<div class="venn-card">
+  <h3>Top-{top_k} accession overlap</h3>
+  <p class="subtle">Counts are accessions in each model's matched top-{top_k} nearest-neighbor set.</p>
+  <svg viewBox="0 0 520 360" role="img" aria-label="Three-way top-k overlap diagram">
+    <circle cx="215" cy="150" r="105" fill="#e9b44c" fill-opacity="0.42" stroke="#a15c00" stroke-width="2"></circle>
+    <circle cx="305" cy="150" r="105" fill="#4c9f70" fill-opacity="0.38" stroke="#1f7a4d" stroke-width="2"></circle>
+    <circle cx="260" cy="235" r="105" fill="#5f8cc0" fill-opacity="0.38" stroke="#2c5f8f" stroke-width="2"></circle>
+
+    <text class="venn-label" x="128" y="42" font-size="13">{escape(label_a)}</text>
+    <text class="venn-label" x="315" y="42" font-size="13">{escape(label_b)}</text>
+    <text class="venn-label" x="202" y="345" font-size="13">{escape(label_c)}</text>
+
+    <text class="venn-count" x="176" y="135" font-size="26" text-anchor="middle">{a_only}</text>
+    <text class="venn-count" x="344" y="135" font-size="26" text-anchor="middle">{b_only}</text>
+    <text class="venn-count" x="260" y="285" font-size="26" text-anchor="middle">{c_only}</text>
+    <text class="venn-count" x="260" y="132" font-size="24" text-anchor="middle">{a_b_only}</text>
+    <text class="venn-count" x="218" y="215" font-size="24" text-anchor="middle">{a_c_only}</text>
+    <text class="venn-count" x="302" y="215" font-size="24" text-anchor="middle">{b_c_only}</text>
+    <text class="venn-count" x="260" y="184" font-size="28" text-anchor="middle">{all_three}</text>
+  </svg>
+  <div class="badge-row">
+    <span class="badge">{escape(label_a)}: {a_size}</span>
+    <span class="badge">{escape(label_b)}: {b_size}</span>
+    <span class="badge">{escape(label_c)}: {c_size}</span>
+  </div>
+</div>
+"""
+
+
 def _render_query_label_consistency_table(
     label_overlap_df: "pd.DataFrame",
     query_accession: str,
-    cloud_threshold: float,
+    top_k_neighbors: int,
 ) -> str:
-    """Render per-query cloud label-match rates for the HTML report."""
+    """Render per-query top-k label-match rates for the HTML report."""
     if label_overlap_df.empty:
         return ""
 
     query_label_df = label_overlap_df.loc[
         (label_overlap_df["query_accession"] == query_accession)
-        & (label_overlap_df["threshold"].round(6) == round(float(cloud_threshold), 6))
+        & (label_overlap_df["top_k"] == int(top_k_neighbors))
     ].copy()
     if query_label_df.empty:
         return ""
@@ -1158,7 +1351,7 @@ def _render_query_label_consistency_table(
         rows.append(
             "<tr>"
             f"<td>{escape(str(row.model_label))}</td>"
-            f"<td>{int(row.cloud_size)}</td>"
+            f"<td>{int(row.neighborhood_size)}</td>"
             f"<td>{int(row.labeled_neighbors)}</td>"
             f"<td>{int(row.neighbors_without_labels)}</td>"
             f"<td>{same_full_set_rate:.1f}%</td>"
@@ -1169,11 +1362,11 @@ def _render_query_label_consistency_table(
 
     return (
         '<div class="venn-card label-stats-card">'
-        "<h3>Cloud label match rates</h3>"
-        f'<p class="subtle">Computed within this query cloud at threshold &gt;= {cloud_threshold:.2f}. '
+        f"<h3>Top-{top_k_neighbors} label match rates</h3>"
+        f'<p class="subtle">Computed within each model\'s matched top-{top_k_neighbors} nearest neighbors. '
         "Percentages use only neighbors with prepared labels. Neighbors with no prepared label are shown separately.</p>"
         '<div class="table-scroll">'
-        "<table><thead><tr><th>Model</th><th>Total in cloud</th><th>With labels</th>"
+        f"<table><thead><tr><th>Model</th><th>Total in top {top_k_neighbors}</th><th>With labels</th>"
         "<th>No label available</th><th>Exact same label set</th><th>Partial-only shared label</th>"
         "<th>Any shared label</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody></table>"
@@ -1291,6 +1484,7 @@ def render_similarity_comparison_html_report(
     plot_paths: dict[str, object],
     gallery_table_df: "pd.DataFrame",
     cloud_threshold: float,
+    top_k_neighbors: int,
     top_n_neighbors: int,
     embed_images: bool = True,
 ) -> str:
@@ -1299,9 +1493,15 @@ def render_similarity_comparison_html_report(
     html_path = output_path / "similarity_model_comparison_report.html"
 
     all_vs_all_df = comparison_tables["all_vs_all_model_comparison"].sort_values("model_order")
-    label_overlap_df = comparison_tables.get("cloud_label_overlap_model_comparison", pd.DataFrame())
+    top_label_overlap_df = comparison_tables.get(
+        "top_neighbor_label_overlap_model_comparison",
+        pd.DataFrame(),
+    )
     top_overlap_df = comparison_tables["top_neighbor_overlap_model_comparison"]
-    venn_overlap_df = comparison_tables.get("three_way_cloud_overlap_summary", pd.DataFrame())
+    top_venn_overlap_df = comparison_tables.get(
+        "top_neighbor_three_way_overlap_summary",
+        pd.DataFrame(),
+    )
     classification_exact_match_df = comparison_tables.get(
         "classification_exact_match_summary",
         pd.DataFrame(),
@@ -1319,13 +1519,13 @@ def render_similarity_comparison_html_report(
         )
 
     label_summary_html = ""
-    if not label_overlap_df.empty:
-        threshold_label_df = label_overlap_df.loc[
-            label_overlap_df["threshold"].round(6) == round(float(cloud_threshold), 6)
+    if not top_label_overlap_df.empty:
+        top_label_df = top_label_overlap_df.loc[
+            top_label_overlap_df["top_k"] == int(top_k_neighbors)
         ]
         summary_df = (
-            threshold_label_df.groupby(["model_order", "model_label"], as_index=False)[
-                ["exact_label_set_match_rate", "any_label_overlap_rate", "cloud_size"]
+            top_label_df.groupby(["model_order", "model_label"], as_index=False)[
+                ["exact_label_set_match_rate", "any_label_overlap_rate", "neighborhood_size"]
             ]
             .mean()
             .sort_values("model_order")
@@ -1337,14 +1537,14 @@ def render_similarity_comparison_html_report(
                 f"<td>{escape(str(row.model_label))}</td>"
                 f"<td>{float(row.exact_label_set_match_rate):.3f}</td>"
                 f"<td>{float(row.any_label_overlap_rate):.3f}</td>"
-                f"<td>{float(row.cloud_size):.1f}</td>"
+                f"<td>{float(row.neighborhood_size):.1f}</td>"
                 "</tr>"
             )
         label_summary_html = (
-            "<h2>Cloud label consistency</h2>"
-            f"<p class=\"subtle\">Averaged across query glycans at threshold >= {cloud_threshold:.2f}.</p>"
+            f"<h2>Matched top-{top_k_neighbors} label consistency</h2>"
+            "<p class=\"subtle\">Averaged across query glycans. Each model contributes the same number of nearest neighbors.</p>"
             "<table><thead><tr><th>Model</th><th>Exact label-set match</th>"
-            "<th>Any label overlap</th><th>Mean cloud size</th></tr></thead>"
+            f"<th>Any label overlap</th><th>Mean top-{top_k_neighbors} size</th></tr></thead>"
             f"<tbody>{''.join(rows)}</tbody></table>"
         )
 
@@ -1367,8 +1567,6 @@ def render_similarity_comparison_html_report(
             "</tr>"
         )
 
-    threshold_plot_paths = plot_paths.get("threshold_cloud_size_plots", {})
-    threshold_plot_key = f">= {cloud_threshold:.2f}"
     plot_html = "".join(
         [
             _render_plot_image(
@@ -1383,12 +1581,6 @@ def render_similarity_comparison_html_report(
                 "Query median similarity",
                 embed_images=embed_images,
             ),
-            _render_plot_image(
-                str(threshold_plot_paths.get(threshold_plot_key, "")),
-                output_path,
-                f"Cloud sizes at >= {cloud_threshold:.2f}",
-                embed_images=embed_images,
-            ),
         ]
     )
 
@@ -1397,18 +1589,18 @@ def render_similarity_comparison_html_report(
         first_row = query_df.iloc[0]
         query_labels_html = _render_labels(str(first_row["query_labels_json"]))
         label_stats_html = _render_query_label_consistency_table(
-            label_overlap_df=label_overlap_df,
+            label_overlap_df=top_label_overlap_df,
             query_accession=query_accession,
-            cloud_threshold=cloud_threshold,
+            top_k_neighbors=top_k_neighbors,
         )
         venn_html = ""
-        if not venn_overlap_df.empty:
-            query_venn_df = venn_overlap_df.loc[
-                (venn_overlap_df["query_accession"] == query_accession)
-                & (venn_overlap_df["threshold"].round(6) == round(float(cloud_threshold), 6))
+        if not top_venn_overlap_df.empty:
+            query_venn_df = top_venn_overlap_df.loc[
+                (top_venn_overlap_df["query_accession"] == query_accession)
+                & (top_venn_overlap_df["top_k"] == int(top_k_neighbors))
             ]
             if not query_venn_df.empty:
-                venn_html = _render_three_way_venn_svg(query_venn_df.iloc[0])
+                venn_html = _render_three_way_top_k_venn_svg(query_venn_df.iloc[0])
 
         query_cartoon_html = _render_cartoon_image(
             str(first_row["query_cartoon_path"]),
@@ -1424,7 +1616,7 @@ def render_similarity_comparison_html_report(
         ):
             neighbor_cards = []
             for row in model_df.itertuples(index=False):
-                in_models = _parse_labels_json(getattr(row, "in_models_at_threshold_json"))
+                in_models = _parse_labels_json(getattr(row, "in_models_in_top_k_json"))
                 in_model_badges = "".join(
                     f'<span class="badge">{escape(model)}</span>' for model in in_models
                 )
@@ -1442,7 +1634,7 @@ def render_similarity_comparison_html_report(
                     f"{_render_labels(str(row.neighbor_labels_json))}"
                     "</div>"
                     '<div class="badge-row">'
-                    '<span class="badge warn">in threshold cloud:</span>'
+                    f'<span class="badge warn">in top-{top_k_neighbors} set:</span>'
                     f"{in_model_badges}"
                     "</div>"
                     f'<div class="sequence">{escape(str(row.corpus_sequence))}</div>'
@@ -1497,7 +1689,7 @@ def render_similarity_comparison_html_report(
       {_render_classification_exact_match_card(classification_exact_match_df)}
       <div class="card">
         <h3>Gallery settings</h3>
-        <p>Cloud threshold: <strong>>= {cloud_threshold:.2f}</strong><br>Neighbors shown per query/model: <strong>{top_n_neighbors}</strong></p>
+        <p>Matched comparison set: <strong>top {top_k_neighbors} neighbors</strong><br>Cartoon neighbors shown per query/model: <strong>{top_n_neighbors}</strong></p>
       </div>
       <div class="card">
         <h3>Badge meanings</h3>
@@ -1520,14 +1712,14 @@ def render_similarity_comparison_html_report(
     {label_summary_html}
 
     <h2>Top-neighbor overlap</h2>
-    <p class="subtle">Each row compares two models using the same query glycans. Mean shared top neighbors is the average number of accessions shared between the two top-{top_n_neighbors} neighbor lists. Mean normalized overlap is the shared count divided by the total unique accessions across both lists. Zero means no overlap; one means the two models returned the same neighbors.</p>
+    <p class="subtle">Each row compares two models using the same query glycans. Mean shared top neighbors is the average number of accessions shared between the two top-{top_k_neighbors} neighbor lists. Mean normalized overlap is the shared count divided by the total unique accessions across both lists. Zero means no overlap; one means the two models returned the same neighbors.</p>
     <table>
       <thead><tr><th>Model A</th><th>Model B</th><th>Mean shared top neighbors</th><th>Mean normalized overlap</th></tr></thead>
       <tbody>{''.join(pair_rows)}</tbody>
     </table>
 
     <h2>Query galleries</h2>
-    <p class="subtle">These sections are the visual sanity check: same query, model-specific nearest neighbors, cartoons, labels, and threshold-cloud membership.</p>
+    <p class="subtle">These sections are the visual sanity check: same query, model-specific nearest neighbors, cartoons, labels, and top-{top_k_neighbors} membership.</p>
     {''.join(query_sections)}
   </main>
   <div class="plot-modal" id="plot-modal" onclick="closePlotModal(event)">
@@ -1615,6 +1807,10 @@ def build_similarity_model_comparison(
             loaded_tables["specific_vs_all_ranked"],
             top_k=top_k_neighbors,
         ),
+        "top_neighbor_three_way_overlap_summary": build_three_way_top_neighbor_overlap_summary(
+            loaded_tables["specific_vs_all_ranked"],
+            top_k=top_k_neighbors,
+        ),
         "threshold_cloud_overlap_model_comparison": build_threshold_cloud_overlap(
             loaded_tables["specific_vs_all_ranked"],
             thresholds=cloud_thresholds,
@@ -1627,7 +1823,7 @@ def build_similarity_model_comparison(
             loaded_tables["specific_vs_all_ranked"],
             label_lookup=label_lookup,
             cartoon_lookup=cartoon_lookup,
-            cloud_threshold=html_cloud_threshold,
+            membership_top_k=top_k_neighbors,
             top_n_neighbors=html_top_n_neighbors,
         ),
         "classification_exact_match_summary": build_classification_exact_match_summary(run_specs),
@@ -1638,6 +1834,13 @@ def build_similarity_model_comparison(
             loaded_tables["specific_vs_all_ranked"],
             label_lookup=label_lookup,
             thresholds=cloud_thresholds,
+        )
+        comparison_tables["top_neighbor_label_overlap_model_comparison"] = (
+            build_top_neighbor_label_overlap_summary(
+                loaded_tables["specific_vs_all_ranked"],
+                label_lookup=label_lookup,
+                top_k=top_k_neighbors,
+            )
         )
 
     saved_table_paths = save_comparison_tables(comparison_tables, output_path)
@@ -1667,6 +1870,7 @@ def build_similarity_model_comparison(
         plot_paths=plot_paths,
         gallery_table_df=comparison_tables["html_neighbor_gallery_table"],
         cloud_threshold=html_cloud_threshold,
+        top_k_neighbors=top_k_neighbors,
         top_n_neighbors=html_top_n_neighbors,
         embed_images=embed_html_images,
     )
