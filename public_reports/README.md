@@ -3,26 +3,35 @@
 This folder is the GitHub-facing home for small static report exports that are
 safe to share in a browser.
 
+The public layout is notebook-based on purpose. Each top-level folder maps back
+to the notebook that produced the report, which keeps new report families easy
+to place without inventing a second taxonomy for HTML outputs.
+
+Current notebook roots:
+
+- `public_reports/07_similarity_analysis/`
+- `public_reports/08_similarity_scaleup/`
+- `public_reports/12_glyberta_similarity_model_comparison/`
+
 The intended workflow is:
 
-1. Generate the clean HTML export from notebook `07_similarity_analysis.ipynb`
-   or notebook `08_similarity_scaleup.ipynb`.
+1. Generate the clean HTML export from the notebook.
 2. Let that notebook save the export to Google Drive first.
 3. Review the exported files in Drive and make sure the scan is clean.
 4. Copy the final shareable folder into this directory.
 5. Commit only the report folder you want to publish.
 
-For notebook 7 manual variant-review reports, the expected repo destination is
-run-specific, for example:
+Expected repo destinations are notebook-specific, for example:
 
-- `public_reports/similarity/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/live_extended/`
-- `public_reports/similarity/classification/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/cls_lr2e-5_ep100_bs16_mlm/live_extended/`
+- notebook 7:
+  `public_reports/07_similarity_analysis/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrained_mlm/live_extended/`
+- notebook 7 classifier run:
+  `public_reports/07_similarity_analysis/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/cls_lr2e-5_ep100_bs16_mlm/live_extended/`
+- notebook 8:
+  `public_reports/08_similarity_scaleup/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrained_mlm/live_extended/`
+- notebook 12:
+  `public_reports/12_glyberta_similarity_model_comparison/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrain_vs_classifier_mlm_vs_randominit/`
 
-For notebook 8 similarity scale-up reports, the expected repo destination is
-run-specific, for example:
-
-- `public_reports/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/live_extended/`
-
-That folder is meant for browser-facing HTML only, not full notebook output
+This folder is meant for browser-facing HTML only, not full notebook output
 trees, Drive-only artifacts, or intermediate CSV/debug files unless you
 explicitly want them public.

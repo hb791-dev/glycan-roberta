@@ -32,6 +32,7 @@ from src.similarity_core import (
     similarity_matrix_dataframe,
 )
 from src.similarity_scaleup import (
+    build_public_report_subdir,
     _iter_local_html_references,
     _resolve_local_export_reference,
     _scan_text_for_sensitive_strings,
@@ -66,6 +67,8 @@ DEFAULT_VARIANT_MODEL_SUITE = (
         "classifier_run_label_key": "classifier_random_run_label",
     },
 )
+
+NOTEBOOK_07_PUBLIC_REPORT_STEM = "07_similarity_analysis"
 
 def _normalize_variant_set_name(variant_set: str) -> str:
     """Normalize a variant-set label so small naming differences sort together."""
@@ -159,12 +162,22 @@ def build_variant_model_run_specs(
                 f"Model run: {tokenizer_family} tokenizer | {experiment_name} | "
                 f"{classifier_run_label} (classification fine-tuned)"
             )
-            path_parts = ["classification", str(tokenizer_family), str(experiment_name), classifier_run_label]
+            public_report_parts = [
+                str(tokenizer_family),
+                str(experiment_name),
+                classifier_run_label,
+                str(output_run_label),
+            ]
         elif checkpoint_source == "pretraining":
             model_dir = checkpoints_root / str(tokenizer_family) / str(experiment_name) / str(model_subdir)
             output_dir = similarity_root / str(tokenizer_family) / str(experiment_name) / str(output_run_label)
             report_subtitle = f"Model run: {tokenizer_family} tokenizer | {experiment_name} (MLM checkpoint)"
-            path_parts = [str(tokenizer_family), str(experiment_name)]
+            public_report_parts = [
+                str(tokenizer_family),
+                str(experiment_name),
+                "pretrained_mlm",
+                str(output_run_label),
+            ]
         else:
             raise ValueError(f"Unsupported checkpoint_source in suite row: {checkpoint_source!r}")
 
@@ -179,7 +192,11 @@ def build_variant_model_run_specs(
                 "output_name": f"{report_title} - {model_label}",
                 "output_run_label": str(output_run_label),
                 "report_subtitle": report_subtitle,
-                "public_report_subdir": "/".join(["public_reports", "similarity"] + path_parts + [str(output_run_label)]),
+                "public_export_subdir": "/".join([NOTEBOOK_07_PUBLIC_REPORT_STEM] + public_report_parts),
+                "public_report_subdir": build_public_report_subdir(
+                    NOTEBOOK_07_PUBLIC_REPORT_STEM,
+                    public_report_parts,
+                ),
             }
         )
 

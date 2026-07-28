@@ -30,6 +30,29 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Public report path helpers
+# ---------------------------------------------------------------------------
+
+def build_public_report_subdir(
+    notebook_stem: str,
+    path_parts: Sequence[str | Path],
+) -> str:
+    """Return a repo-facing public report path rooted at one notebook name."""
+    normalized_parts = [str(part).strip().strip("/") for part in path_parts if str(part).strip()]
+    return "/".join(["public_reports", str(notebook_stem).strip().strip("/")] + normalized_parts)
+
+
+def build_public_export_dir(
+    export_root,
+    notebook_stem: str,
+    path_parts: Sequence[str | Path],
+) -> Path:
+    """Return a Drive/local staging folder mirroring the repo public path."""
+    normalized_parts = [str(part).strip().strip("/") for part in path_parts if str(part).strip()]
+    return Path(export_root).joinpath(str(notebook_stem).strip().strip("/"), *normalized_parts)
+
+
+# ---------------------------------------------------------------------------
 # Dataframe cleanup and validation
 # ---------------------------------------------------------------------------
 

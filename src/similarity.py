@@ -33,6 +33,8 @@ from src.similarity_scaleup import (
     _summarize_similarity_values,
     attach_pca_to_scaleup_index_html,
     build_focus_cloud_membership,
+    build_public_export_dir,
+    build_public_report_subdir,
     build_all_vs_all_artifacts,
     build_embedding_lookup_for_dataframe,
     build_similarity_distribution_summary,
@@ -47,6 +49,7 @@ from src.similarity_scaleup import (
     save_scaleup_similarity_outputs,
     validate_scaleup_similarity_inputs,
 )
+from src.similarity_model_comparison import export_public_similarity_model_comparison_html
 from src.similarity_variants import (
     DEFAULT_VARIANT_MODEL_SUITE,
     VARIANT_SET_ORDER,

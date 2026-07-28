@@ -332,7 +332,7 @@ Notes:
   classifier fine-tuned from random init for the chosen tokenizer family
 - when public export is enabled, the notebook writes browser-facing HTML into a
   Drive review folder before you copy the final subset into
-  `public_reports/similarity/`
+  `public_reports/07_similarity_analysis/`
 
 ### `08_similarity_scaleup.ipynb`
 
@@ -374,7 +374,7 @@ Notes:
 - the notebook saves outputs under `results/similarity_scaleup/`
 - the notebook can also prepare a clean browser-facing export in Drive that is
   intended to be copied into a run-specific folder such as
-  `public_reports/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/live_extended/`
+  `public_reports/08_similarity_scaleup/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrained_mlm/live_extended/`
   before pushing to GitHub
 
 ### `09_classification_dataset_prep.ipynb`
@@ -546,6 +546,8 @@ Notes:
   cell
 - by default, the HTML report embeds plots and cartoons directly into the HTML
   file so the report can be downloaded/shared as one standalone file
+- the notebook can also prepare a clean public export folder intended for
+  `public_reports/12_glyberta_similarity_model_comparison/`
 - when classifier evaluation summaries from notebook 11 are available, the HTML
   report header shows exact-match, macro F1, and weighted F1 for those
   classifier runs
@@ -566,17 +568,18 @@ Notes:
 
 ## Public HTML Sharing Workflow
 
-Notebook `08_similarity_scaleup.ipynb` now includes a final export step for
-preparing a small static-report folder that is easier to share publicly than
-the full notebook output tree.
+Notebooks `07_similarity_analysis.ipynb`, `08_similarity_scaleup.ipynb`, and
+`12_glyberta_similarity_model_comparison.ipynb` now include final export steps
+for preparing small static-report folders that are easier to share publicly
+than the full notebook output tree.
 
 Recommended flow:
 
-1. Run notebook 8 in Colab.
+1. Run the notebook in Colab.
 2. Run the final public-export cell.
 3. Review the clean export folder in Google Drive.
-4. Copy the reviewed export into the run-specific `public_reports/...` folder in
-   this repository.
+4. Copy the reviewed export into the notebook-specific `public_reports/...`
+   folder in this repository.
 5. Commit only that report folder.
 6. Push to GitHub and open the printed `raw.githack.com` URL.
 

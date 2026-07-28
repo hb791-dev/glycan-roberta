@@ -7,6 +7,7 @@ run on CPU-only Colab sessions.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import base64
 import json
 import mimetypes
@@ -16,6 +17,12 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
+
+from src.similarity_scaleup import (
+    _iter_local_html_references,
+    _resolve_local_export_reference,
+    _scan_text_for_sensitive_strings,
+)
 
 
 SUMMARY_COLUMNS = ["mean", "median", "std_dev", "min", "q05", "q25", "q75", "q95", "max"]
@@ -1700,4 +1707,125 @@ def build_similarity_model_comparison(
         "table_paths": saved_table_paths,
         "plot_paths": plot_paths,
         "manifest_path": str(manifest_path),
+    }
+
+
+def export_public_similarity_model_comparison_html(
+    comparison_outputs: dict | None = None,
+    plot_paths: dict | None = None,
+    export_dir=None,
+    repo_public_subdir: str | None = None,
+    repo_owner: str | None = None,
+    repo_name: str | None = None,
+    repo_ref: str = "main",
+    extra_blocked_strings: Sequence[str] | None = None,
+) -> dict[str, object]:
+    """Copy one notebook-12 HTML report and its local dependencies into a clean folder."""
+    source_plot_paths = plot_paths if plot_paths is not None else (comparison_outputs or {}).get("plot_paths")
+    if source_plot_paths is None:
+        raise ValueError("Provide either comparison_outputs or plot_paths when exporting public HTML.")
+    if export_dir is None:
+        raise ValueError("export_dir is required for export_public_similarity_model_comparison_html().")
+
+    source_html_path = Path(source_plot_paths["html_report_path"]).resolve()
+    output_path = source_html_path.parent
+    export_path = Path(export_dir)
+    export_path.mkdir(parents=True, exist_ok=True)
+
+    pending_relative_paths: list[Path] = [Path(source_html_path.name)]
+    copied_file_rows: list[dict[str, str]] = []
+    dependency_issue_rows: list[dict[str, str]] = []
+    scan_rows: list[dict[str, str]] = []
+    seen_relative_paths: set[str] = set()
+
+    while pending_relative_paths:
+        relative_path = Path(pending_relative_paths.pop(0))
+        relative_key = relative_path.as_posix()
+        if relative_key in seen_relative_paths:
+            continue
+        seen_relative_paths.add(relative_key)
+
+        source_path = (output_path / relative_path).resolve()
+        if not source_path.exists():
+            dependency_issue_rows.append(
+                {
+                    "reference_path": relative_key,
+                    "issue_type": "missing_source_file",
+                    "source_html": "",
+                }
+            )
+            continue
+
+        target_path = export_path / relative_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        copied_file_rows.append(
+            {
+                "relative_path": relative_key,
+                "source_path": str(source_path),
+                "export_path": str(target_path),
+            }
+        )
+
+        if source_path.suffix.lower() not in {".html", ".htm", ".css", ".js"}:
+            continue
+
+        text = source_path.read_text(encoding="utf-8")
+        scan_rows.extend(
+            _scan_text_for_sensitive_strings(
+                text,
+                source_name=relative_key,
+                extra_blocked_strings=extra_blocked_strings,
+            )
+        )
+
+        if source_path.suffix.lower() not in {".html", ".htm"}:
+            continue
+
+        for referenced_path in _iter_local_html_references(text):
+            resolved_reference = _resolve_local_export_reference(referenced_path, source_path.parent)
+            if resolved_reference is None:
+                dependency_issue_rows.append(
+                    {
+                        "reference_path": referenced_path,
+                        "issue_type": "unsupported_or_external_reference",
+                        "source_html": relative_key,
+                    }
+                )
+                continue
+            try:
+                pending_relative_paths.append(resolved_reference.relative_to(output_path))
+            except ValueError:
+                dependency_issue_rows.append(
+                    {
+                        "reference_path": referenced_path,
+                        "issue_type": "reference_outside_output_dir",
+                        "source_html": relative_key,
+                    }
+                )
+
+    copied_files_df = pd.DataFrame(copied_file_rows)
+    dependency_issues_df = pd.DataFrame(dependency_issue_rows)
+    scan_results_df = pd.DataFrame(scan_rows)
+
+    repo_index_path = ""
+    githack_url = ""
+    if repo_public_subdir:
+        repo_index_path = f"{repo_public_subdir.rstrip('/')}/similarity_model_comparison_report.html"
+        if repo_owner and repo_name:
+            githack_url = (
+                f"https://raw.githack.com/{repo_owner}/{repo_name}/{repo_ref}/"
+                f"{repo_index_path}"
+            )
+
+    return {
+        "public_export_dir": str(export_path),
+        "repo_public_subdir": repo_public_subdir or "",
+        "repo_index_path": repo_index_path,
+        "githack_url": githack_url,
+        "copied_files_df": copied_files_df,
+        "dependency_issues_df": dependency_issues_df,
+        "scan_results_df": scan_results_df,
+        "has_dependency_issues": not dependency_issues_df.empty,
+        "has_sensitive_matches": not scan_results_df.empty,
     }
