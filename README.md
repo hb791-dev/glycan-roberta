@@ -303,6 +303,11 @@ Main outputs:
 - `loss_history.csv`
 - `validation_summary.json`
 
+Notes:
+- this notebook can review runs from any of the seven tokenizer families
+- the selected tokenizer family and experiment name determine the checkpoint,
+  metadata, validation-results folder, and run-index update paths
+
 ### `06_test_set_evaluation.ipynb`
 
 Purpose:
@@ -325,6 +330,9 @@ Notes:
 - ROC and precision-recall plots use tokenizer-specific class selections
 - qualitative probes are tokenizer-specific because token boundaries differ
   across tokenizers
+- the evaluation helpers now include explicit token selections and probe
+  targets for `byte_bpe`, `glyberta`, `manual`, `hybrid_char_bpe`,
+  `linkage_block`, `donor_bound`, and `semi_atomic`
 
 ### `06b_rarity_analysis.ipynb`
 
@@ -670,9 +678,9 @@ The current training notebook supports:
 The default notebook configuration currently shown in the training workflow is:
 
 - MLM probability: `0.15`
-- hidden layers: `6`
-- hidden size: `512`
-- attention heads: `8`
+- hidden layers: `4`
+- hidden size: `384`
+- attention heads: `6`
 - learning rate: `1e-4`
 - batch size: `32`
 
@@ -724,9 +732,11 @@ Notes:
 The current evaluation workflow separates:
 
 - notebook 4:
-  - training-time validation diagnostics
-  - overfitting checks
-  - checkpoint behavior
+  - MLM pretraining with on-the-fly validation during training
+  - fresh, checkpoint-resume, and continuation run modes
+- notebook 5:
+  - post-run validation diagnostics
+  - best-epoch and late-training continuation review
 - notebook 6:
   - held-out test-set evaluation
   - top-1 and top-3 token accuracy
@@ -735,6 +745,7 @@ The current evaluation workflow separates:
   - per-class metrics
   - tokenizer-specific ROC and precision-recall plots
   - qualitative-probe examples
+  - support for all seven tokenizer families
 
 ## Reproducibility Notes
 
@@ -757,12 +768,14 @@ accordingly.
 
 This rebuild currently includes:
 
-- all six main notebooks
-- tokenizer generation for all three tokenizer families
-- preprocessing for all three tokenizer families
-- pretraining runs for all three tokenizer families
-- validation diagnostics for all three tokenizer families
-- test-set evaluation outputs for the tokenizer comparison workflow
+- the full notebook pipeline through notebooks `00` to `12`
+- tokenizer generation notebooks for all seven tokenizer strategies
+- dataset preprocessing support for all seven tokenizer families
+- pretraining notebook support for all seven tokenizer families
+- validation-diagnostics notebook support for all seven tokenizer families
+- test-set evaluation support for all seven tokenizer families, including
+  tokenizer-specific ROC/PR token sets and qualitative probes for the three
+  new compact tokenizers
 
 ## Notes
 
