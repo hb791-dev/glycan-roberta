@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.notebook_utils import require_existing_path
+
 
 DEFAULT_CONFIG_PATH = Path("/content/drive/MyDrive/glycan_roberta_config.json")
 REQUIRED_CONFIG_KEYS = ("project_root", "github_owner", "repo_name", "github_ref")
@@ -145,39 +147,6 @@ def ensure_directory(path: str | Path) -> Path:
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def require_existing_path(path: str | Path, description: str) -> Path:
-    """Raise a descriptive error when an expected file or folder is missing."""
-
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(f"{description} not found: {path}")
-    return path
-
-
-def validate_output_paths(
-    output_paths: dict[str, Path],
-    overwrite_existing_outputs: bool,
-) -> None:
-    """Check whether planned output files already exist.
-
-    Many notebooks in this project save results to predictable file names. This
-    helper centralizes the overwrite policy so each notebook can stay focused
-    on analysis steps instead of repeating the same file-existence logic.
-    """
-
-    existing_outputs = [
-        Path(path) for path in output_paths.values() if Path(path).exists()
-    ]
-
-    if existing_outputs and not overwrite_existing_outputs:
-        existing_display = "\n".join(str(path) for path in existing_outputs)
-        raise FileExistsError(
-            "Existing output files were found, and overwriting is disabled.\n"
-            f"{existing_display}\n\n"
-            "Set OVERWRITE_EXISTING_OUTPUTS = True to allow replacement."
-        )
 
 
 def build_notebook_context(
