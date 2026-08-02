@@ -16,6 +16,7 @@ import pandas as pd
 
 from src.tokenizer_utils import (
     build_wordlevel_vocab_from_sequences,
+    build_vocab_regex_from_wordlevel_vocab,
     create_wordlevel_fast_tokenizer,
     save_vocab_json,
 )
@@ -82,6 +83,35 @@ def save_tokenizer_summary(
     return summary_path
 
 
+def build_tokenizer_summary_payload(
+    tokenizer_family: str,
+    setting_label: str,
+    train_data_path: str | Path,
+    tokenizer_output_dir: str | Path,
+    saved_files: list[str],
+    extra_fields: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Build the common summary payload saved by tokenizer notebooks.
+
+    Most tokenizer notebooks record the same core metadata about where the
+    tokenizer was trained, where it was saved, and which files were produced.
+    Centralizing that structure keeps the notebooks shorter and more uniform.
+    """
+
+    payload: dict[str, object] = {
+        "tokenizer_family": tokenizer_family,
+        "setting_label": setting_label,
+        "train_data_path": str(train_data_path),
+        "tokenizer_output_dir": str(tokenizer_output_dir),
+        "saved_files": saved_files,
+    }
+
+    if extra_fields:
+        payload.update(extra_fields)
+
+    return payload
+
+
 def build_and_save_wordlevel_vocab(
     train_sequences: list[str],
     tokenize_function: Callable[[str], list[str]],
@@ -119,6 +149,51 @@ def create_and_save_wordlevel_tokenizer(
 
     saved_files = sorted(path.name for path in tokenizer_output_dir.iterdir())
     return backend_tokenizer, hf_tokenizer, saved_files
+
+
+def build_vocab_pattern_and_save_wordlevel_tokenizer(
+    vocab: dict[str, int],
+    tokenizer_output_dir: str | Path,
+):
+    """Build a longest-first regex from the vocab, then save the tokenizer.
+
+    Fixed-vocabulary tokenizer notebooks use this pattern so the runtime
+    tokenizer applies the same token boundaries that were present when the
+    vocabulary was constructed.
+    """
+
+    pretokenizer_pattern = build_vocab_regex_from_wordlevel_vocab(vocab)
+    backend_tokenizer, hf_tokenizer, saved_files = create_and_save_wordlevel_tokenizer(
+        vocab=vocab,
+        pretokenizer_pattern=pretokenizer_pattern,
+        tokenizer_output_dir=tokenizer_output_dir,
+    )
+    return pretokenizer_pattern, backend_tokenizer, hf_tokenizer, saved_files
+
+
+def build_wordlevel_tokenizer_artifacts(
+    train_sequences: list[str],
+    tokenize_function: Callable[[str], list[str]],
+    vocab_path: str | Path,
+    tokenizer_output_dir: str | Path,
+) -> tuple[dict[str, int], Counter, str, list[str]]:
+    """Build the main artifacts for one fixed-vocabulary tokenizer notebook.
+
+    The helper writes ``vocab.json``, derives the longest-first tokenizer
+    pattern from that vocabulary, saves the Hugging Face tokenizer files, and
+    returns the values that the notebook may want to report in its summary.
+    """
+
+    vocab, token_counts = build_and_save_wordlevel_vocab(
+        train_sequences=train_sequences,
+        tokenize_function=tokenize_function,
+        vocab_path=vocab_path,
+    )
+    pretokenizer_pattern, _, _, saved_files = build_vocab_pattern_and_save_wordlevel_tokenizer(
+        vocab=vocab,
+        tokenizer_output_dir=tokenizer_output_dir,
+    )
+    return vocab, token_counts, pretokenizer_pattern, saved_files
 
 
 def build_tokenizer_inspection_preview(
