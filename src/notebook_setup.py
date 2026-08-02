@@ -98,6 +98,33 @@ def load_project_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> dict[s
     return config
 
 
+def build_runtime_config(
+    project_root: str | Path,
+    github_owner: str,
+    repo_name: str,
+    github_ref: str = "main",
+    repo_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build the small runtime-config dictionary used by notebook helpers.
+
+    This helper supports the simpler notebook pattern where the editable
+    settings stay visible inside the notebook itself instead of being stored
+    in a separate JSON file. It keeps the structure compatible with the
+    existing context-building helpers.
+    """
+
+    if repo_dir is None:
+        repo_dir = Path("/content") / repo_name
+
+    return {
+        "project_root": str(project_root),
+        "github_owner": github_owner,
+        "repo_name": repo_name,
+        "github_ref": github_ref,
+        "repo_dir": str(repo_dir),
+    }
+
+
 def sync_repo(
     owner: str,
     repo_name: str,
@@ -231,6 +258,63 @@ def bootstrap_notebook(
         notebook_name=notebook_name,
         config=config,
         repo_dir=repo_dir,
+    )
+
+    print("Notebook runtime ready.")
+    print(f" - Repository directory: {context.repo_dir}")
+    print(f" - Project root: {context.project_root}")
+
+    return context
+
+
+def bootstrap_notebook_from_settings(
+    notebook_name: str,
+    project_root: str | Path,
+    github_owner: str,
+    repo_name: str,
+    github_ref: str = "main",
+    repo_dir: str | Path | None = None,
+    require_drive: bool = True,
+    require_repo_sync: bool = True,
+) -> NotebookContext:
+    """Prepare a notebook runtime from settings defined inside the notebook.
+
+    This is the preferred helper for notebooks that keep ``PROJECT_ROOT`` and
+    other editable values in a visible user-settings cell.
+    """
+
+    print(f"Preparing notebook runtime for: {notebook_name}")
+
+    if require_drive:
+        mount_google_drive_if_needed()
+
+    config = build_runtime_config(
+        project_root=project_root,
+        github_owner=github_owner,
+        repo_name=repo_name,
+        github_ref=github_ref,
+        repo_dir=repo_dir,
+    )
+    resolved_repo_dir = Path(config["repo_dir"])
+
+    if require_repo_sync:
+        resolved_repo_dir = sync_repo(
+            owner=config["github_owner"],
+            repo_name=config["repo_name"],
+            repo_dir=resolved_repo_dir,
+            github_ref=config["github_ref"],
+        )
+    else:
+        resolved_repo_dir = require_existing_path(
+            resolved_repo_dir,
+            "Repository directory",
+        )
+
+    add_repo_to_sys_path(resolved_repo_dir)
+    context = build_notebook_context(
+        notebook_name=notebook_name,
+        config=config,
+        repo_dir=resolved_repo_dir,
     )
 
     print("Notebook runtime ready.")
