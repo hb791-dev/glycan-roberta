@@ -8,9 +8,17 @@ construction, summary saving, and simple inspection-table generation.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
+
+from src.tokenizer_utils import (
+    build_wordlevel_vocab_from_sequences,
+    create_wordlevel_fast_tokenizer,
+    save_vocab_json,
+)
 
 
 def build_tokenizer_paths(
@@ -72,6 +80,45 @@ def save_tokenizer_summary(
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
     return summary_path
+
+
+def build_and_save_wordlevel_vocab(
+    train_sequences: list[str],
+    tokenize_function: Callable[[str], list[str]],
+    vocab_path: str | Path,
+) -> tuple[dict[str, int], Counter]:
+    """Build one deterministic WordLevel vocabulary and write ``vocab.json``.
+
+    This helper keeps the notebook focused on the tokenizer strategy while the
+    repeated vocabulary-building mechanics stay in shared code.
+    """
+
+    vocab, token_counts = build_wordlevel_vocab_from_sequences(
+        train_sequences,
+        tokenize_function,
+    )
+    save_vocab_json(vocab, str(vocab_path))
+    return vocab, token_counts
+
+
+def create_and_save_wordlevel_tokenizer(
+    vocab: dict[str, int],
+    pretokenizer_pattern: str,
+    tokenizer_output_dir: str | Path,
+):
+    """Create and save a Hugging Face fast tokenizer from a fixed vocabulary."""
+
+    tokenizer_output_dir = Path(tokenizer_output_dir)
+    tokenizer_output_dir.mkdir(parents=True, exist_ok=True)
+
+    backend_tokenizer, hf_tokenizer = create_wordlevel_fast_tokenizer(
+        vocab=vocab,
+        pretokenizer_pattern=pretokenizer_pattern,
+    )
+    hf_tokenizer.save_pretrained(str(tokenizer_output_dir))
+
+    saved_files = sorted(path.name for path in tokenizer_output_dir.iterdir())
+    return backend_tokenizer, hf_tokenizer, saved_files
 
 
 def build_tokenizer_inspection_preview(
