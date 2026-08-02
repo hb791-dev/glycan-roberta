@@ -24,22 +24,28 @@ This rebuild uses a split-storage workflow.
 
 - GitHub repository:
   - notebooks
-  - helper scripts
-  - templates
+  - helper scripts in `src/`
+  - lightweight templates and public-report assets
 - Google Drive:
   - raw data
   - train-validation-test splits
   - tokenizer artifacts
   - tokenized datasets
-  - training checkpoints
-  - validation outputs
-  - test-set evaluation outputs
+  - checkpoints
+  - evaluation outputs
 
-The intended Drive root is:
+## Drive Root Setting
+
+Each notebook keeps `PROJECT_ROOT` as an editable user setting near the top.
+You must update that path to match the Drive folder you are actually using.
+
+Examples in this README use a placeholder such as:
 
 - `MyDrive/ProjectRoot/`
 
-The notebooks assume a single Drive project root at `MyDrive/ProjectRoot/`.
+If your real folder is different, for example `MyDrive/GlycanProject/`, update
+`PROJECT_ROOT` in the notebook before running it. The cleaned notebooks do not
+assume that the literal folder name must be `ProjectRoot`.
 
 ## Repository Layout
 
@@ -71,11 +77,13 @@ glycan-roberta/
 │   ├── 11_classification_evaluation.ipynb
 │   └── 12_glyberta_similarity_model_comparison.ipynb
 ├── public_reports/
-│   ├── README.md
-│   └── <tokenizer_family>/
-│       └── <experiment_name>/
-│           └── <run_label>/
 ├── src/
+│   ├── exploration.py
+│   ├── data_utils.py
+│   ├── notebook_setup.py
+│   ├── notebook_utils.py
+│   ├── tokenizer_notebook_utils.py
+│   ├── tokenizer_utils.py
 │   ├── classification_prep.py
 │   ├── classification_evaluation.py
 │   ├── classification_training.py
@@ -86,17 +94,14 @@ glycan-roberta/
 │   ├── similarity_variants.py
 │   ├── similarity_scaleup.py
 │   ├── test_evaluation.py
-│   ├── tokenizer_utils.py
 │   └── training_diagnostics.py
 └── templates/
-    ├── experiment_metadata.example.json
-    └── run_index.csv
 ```
 
 ## Expected Drive Layout
 
 ```text
-MyDrive/ProjectRoot/
+MyDrive/<PROJECT_ROOT>/
 ├── data/
 │   ├── raw/
 │   │   ├── raw_glycans_dataset_no_aldi.txt
@@ -106,33 +111,17 @@ MyDrive/ProjectRoot/
 │       ├── train.txt
 │       ├── val.txt
 │       ├── test.txt
-│       ├── split_summary.csv
-│       └── split_preview.csv
+│       └── split_summary.csv
 ├── tokenizers/
 │   ├── byte_bpe/
 │   ├── glyberta/
+│   ├── manual/
 │   ├── hybrid_char_bpe/
 │   ├── linkage_block/
 │   ├── donor_bound/
-│   ├── semi_atomic/
-│   └── manual/
+│   └── semi_atomic/
 ├── tokenized_datasets/
-│   ├── byte_bpe/
-│   ├── glyberta/
-│   ├── hybrid_char_bpe/
-│   ├── linkage_block/
-│   ├── donor_bound/
-│   ├── semi_atomic/
-│   └── manual/
 ├── checkpoints/
-│   ├── byte_bpe/
-│   ├── classification/
-│   ├── glyberta/
-│   ├── hybrid_char_bpe/
-│   ├── linkage_block/
-│   ├── donor_bound/
-│   ├── semi_atomic/
-│   └── manual/
 ├── results/
 │   ├── exploration/
 │   ├── validation/
@@ -142,8 +131,8 @@ MyDrive/ProjectRoot/
 │   ├── similarity/
 │   ├── similarity_scaleup/
 │   └── classification_prep/
-└── registry/
-    └── run_index.csv
+├── registry/
+└── public_reports/
 ```
 
 ## Notebook Workflow
@@ -151,114 +140,231 @@ MyDrive/ProjectRoot/
 ### `00_data_exploration.ipynb`
 
 Purpose:
-- inspect the raw glycan dataset
-- summarize sequence lengths
-- save lightweight exploration outputs
+- inspect the raw glycan sequence file before any splitting or tokenizer work
+- summarize dataset size and sequence-length behavior
+- save a lightweight reference snapshot of the raw corpus
+
+Inputs:
+- `data/raw/raw_glycans_dataset_no_aldi.txt`
 
 Main outputs:
-- dataset summary CSV
-- example sequences CSV
-- sequence-length distribution plot
+- `results/exploration/dataset_summary.csv`
+- `results/exploration/example_sequences.csv`
+- `results/exploration/sequence_length_distribution.png`
 
 ### `01_data_splitting.ipynb`
 
 Purpose:
-- create the train-validation-test split from the raw dataset
+- create the reusable train, validation, and test split used by later notebooks
+- make the active seed explicit so the split can be reproduced later
+
+Inputs:
+- `data/raw/raw_glycans_dataset_no_aldi.txt`
 
 Main outputs:
-- `train.txt`
-- `val.txt`
-- `test.txt`
-- `split_summary.csv`
-- `split_preview.csv`
+- `data/splits/train.txt`
+- `data/splits/val.txt`
+- `data/splits/test.txt`
+- `data/splits/split_summary.csv`
 
 ### `02a_byte_bpe_gen.ipynb`
 
 Purpose:
-- train the byte-level BPE tokenizer on the training split
+- train the byte-level BPE baseline tokenizer on the training split
+
+Inputs:
+- `data/splits/train.txt`
 
 Main outputs:
-- tokenizer files
-- merges and vocab
-- inspection preview
-- tokenizer configuration summary
+- `tokenizers/byte_bpe/<setting_label>/vocab.json`
+- `tokenizers/byte_bpe/<setting_label>/merges.txt`
+- Hugging Face tokenizer files in the same folder
+- `tokenizer_config_summary.json`
+- optionally `inspection_preview.csv`
 
 ### `02b_glyberta_gen.ipynb`
 
 Purpose:
-- train the GlyBERTa-style WordLevel tokenizer on the training split
-- adapt the GlyBERTa glyco-letter idea to this project's compact glycan format
-- isolate inline linkage text and branch markers before learning the vocabulary
+- train a GlyBERTa-style WordLevel tokenizer on compact glycan strings
+- isolate inline linkage text and branch markers before vocabulary learning
+
+Inputs:
+- `data/splits/train.txt`
 
 Main outputs:
-- tokenizer files
-- vocab
-- inspection preview
-- tokenizer configuration summary
+- `tokenizers/glyberta/<setting_label>/vocab.json`
+- Hugging Face tokenizer files in the same folder
+- `tokenizer_config_summary.json`
+- optionally `inspection_preview.csv`
 
 ### `02c_manual_gen.ipynb`
 
 Purpose:
-- build the manual glycan tokenizer from the training split
-- save a fixed vocabulary and matching Hugging Face tokenizer
+- build a fixed manual-tokenizer vocabulary from the hand-defined parser
+- save a matching Hugging Face tokenizer that follows the same token boundaries
+
+Inputs:
+- `data/splits/train.txt`
 
 Main outputs:
-- tokenizer files
-- vocab
-- inspection preview
-- tokenizer configuration summary
+- `tokenizers/manual/<setting_label>/vocab.json`
+- Hugging Face tokenizer files in the same folder
+- `tokenizer_config_summary.json`
+- optionally `inspection_preview.csv`
 
 ### `02d_hybrid_char_bpe_gen.ipynb`
 
 Purpose:
-- train a hybrid char-BPE tokenizer restricted to the character inventory
-  present in the dataset
-- leave more vocabulary space available for learned merges
+- train a character-level BPE tokenizer on compact glycan strings
+- provide a middle ground between byte-level BPE and the structured tokenizers
+
+Inputs:
+- `data/splits/train.txt`
 
 Main outputs:
-- tokenizer files
-- merges and vocab
-- inspection preview
-- tokenizer configuration summary
+- `tokenizers/hybrid_char_bpe/<setting_label>/vocab.json`
+- `tokenizers/hybrid_char_bpe/<setting_label>/merges.txt`
+- Hugging Face tokenizer files in the same folder
+- `tokenizer_config_summary.json`
+- optionally `inspection_preview.csv`
 
 ### `02e_linkage_block_gen.ipynb`
 
 Purpose:
-- build a rule-based linkage-block tokenizer from the training split
-- bundle each donor sugar and full glycosidic linkage into one token when a
-  linkage is present
+- build a fixed vocabulary where a residue plus its inline linkage can stay
+  bundled together as one token
+
+Inputs:
+- `data/splits/train.txt`
 
 Main outputs:
-- tokenizer files
-- vocab
-- inspection preview
-- tokenizer configuration summary
+- `tokenizers/linkage_block/<setting_label>/vocab.json`
+- Hugging Face tokenizer files in the same folder
+- `tokenizer_config_summary.json`
+- optionally `inspection_preview.csv`
 
 ### `02f_donor_bound_gen.ipynb`
 
 Purpose:
-- build a rule-based donor-bound tokenizer from the training split
-- keep donor sugar plus anomer-plus-donor-carbon together while splitting the
-  acceptor carbon into its own token
+- build a fixed vocabulary where donor-side information stays grouped while the
+  acceptor carbon remains separate
+
+Inputs:
+- `data/splits/train.txt`
 
 Main outputs:
-- tokenizer files
-- vocab
-- inspection preview
-- tokenizer configuration summary
+- `tokenizers/donor_bound/<setting_label>/vocab.json`
+- Hugging Face tokenizer files in the same folder
+- `tokenizer_config_summary.json`
+- optionally `inspection_preview.csv`
 
 ### `02g_semi_atomic_gen.ipynb`
 
 Purpose:
-- build a rule-based semi-atomic tokenizer from the training split
-- separate residue identity, donor configuration, and acceptor site into
-  smaller reusable tokens
+- build the most modular fixed vocabulary in this tokenizer family
+- keep residues, donor markers, and acceptor markers as smaller reusable units
+
+Inputs:
+- `data/splits/train.txt`
 
 Main outputs:
-- tokenizer files
-- vocab
-- inspection preview
-- tokenizer configuration summary
+- `tokenizers/semi_atomic/<setting_label>/vocab.json`
+- Hugging Face tokenizer files in the same folder
+- `tokenizer_config_summary.json`
+- optionally `inspection_preview.csv`
+
+## Tokenizer Families
+
+### `byte_bpe`
+
+- Learns byte-level BPE merges directly from the training split.
+- This is the most generic baseline and makes the fewest glycan-specific assumptions.
+
+### `glyberta`
+
+- Adapts the GlyBERTa glyco-letter idea to compact IUPAC glycans.
+- Inline linkages such as `b1-4` and branch markers such as `(` and `)` are isolated before WordLevel vocabulary learning.
+
+### `manual`
+
+- Uses the project's hand-written glycan parser to define tokens directly.
+- This is the main biologically structured fixed-vocabulary baseline.
+
+### `hybrid_char_bpe`
+
+- Learns BPE merges from the compact glycan character inventory rather than from a full byte representation.
+- This sits between fully learned BPE and fully rule-based tokenization.
+
+### `linkage_block`
+
+- Bundles a residue and its inline linkage together when they occur as a unit.
+- Example behavior: tokens such as `Galb1-4` can stay intact.
+
+### `donor_bound`
+
+- Keeps donor-side residue and donor-linkage information together while separating the acceptor carbon.
+- Example behavior: `Galb1` and `-4` can become separate tokens.
+
+### `semi_atomic`
+
+- Splits glycans into smaller reusable pieces such as residue identity, donor information, and acceptor information.
+- This is the most modular structured tokenizer in the current set.
+
+## Helper Scripts Used By Notebooks `00` To `02g`
+
+### `src/notebook_setup.py`
+
+- mounts Google Drive when needed
+- syncs the GitHub repo into the Colab runtime
+- adds the repo to `sys.path`
+- builds a shared notebook context with standard project directories
+
+### `src/notebook_utils.py`
+
+- validates required input paths
+- checks overwrite policy for predictable output files
+- resolves reproducible or generated random seeds
+
+### `src/exploration.py`
+
+- loads raw glycan text data
+- builds summary tables for notebook `00`
+- plots and saves the sequence-length distribution
+- saves the exploration CSV outputs
+
+### `src/data_utils.py`
+
+- loads raw sequence text
+- creates train, validation, and test splits
+- saves split files and `split_summary.csv`
+- keeps notebook `01` focused on workflow rather than split mechanics
+
+### `src/tokenizer_notebook_utils.py`
+
+- builds standard tokenizer input and output paths
+- validates optional output files such as inspection previews and merges
+- saves tokenizer summary JSON files
+- builds small tokenizer inspection tables
+- centralizes repeated fixed-vocabulary tokenizer artifact creation
+
+### `src/tokenizer_utils.py`
+
+- contains the actual tokenization logic and training helpers
+- defines the manual glycan parser
+- defines the GlyBERTa-style compact split rule
+- trains BPE and WordLevel tokenizer variants
+- supports vocabulary construction for the structured tokenizers
+
+## Optional Diagnostic Outputs
+
+- `inspection_preview.csv` is a convenience file for checking how a tokenizer
+  split a small sample of glycans. It is useful for review, but downstream
+  notebooks do not require it.
+- `tokenization_preview.csv` plays the same role after dataset preprocessing.
+  It is helpful for spot-checking token IDs, masks, and truncation behavior,
+  but it is not a required training artifact.
+- `split_preview.csv` came from an older version of notebook `01`. The cleaned
+  notebook no longer depends on it or treats it as a standard output.
 
 ### `03_dataset_preprocessing.ipynb`
 
@@ -353,6 +459,8 @@ Purpose:
 - choose one tokenizer family and pretrained experiment in Drive, then build one
   run suite across the saved MLM checkpoint plus the saved classifier runs
 - define small manual anchor-and-variant review sets directly in the notebook
+- choose a pooling strategy for sequence embeddings (`mean` baseline or `max`
+  comparison) and keep that choice attached to saved output names
 - score anchor-to-variant cosine similarity and rank variants within each set
 - inspect tokenization alongside similarity results
 - summarize similarity distributions with histograms across all 9 variants in each anchor group
@@ -380,6 +488,10 @@ Notes:
   `results/similarity/<tokenizer_family>/<experiment_name>/<run_label>/`
 - classification-backed variant runs are nested under:
   `results/similarity/classification/<tokenizer_family>/<experiment_name>/<classifier_run_label>/<run_label>/`
+- the notebook now exposes `POOLING_STRATEGY`, and the default run label is
+  expected to include a suffix such as `mean_pool` or `max_pool` so both
+  variants can be saved side by side without overwriting one another
+- `variant_similarity_config.json` records the pooling choice for each run
 - this notebook is not split-specific evaluation: it does not automatically load
   only the train, validation, or test set
 - the selected checkpoint may come from a run associated with a dataset split,
@@ -404,6 +516,8 @@ Purpose:
 - run `all vs all` similarity across the test set to get the background distribution
 - run `specific vs all` similarity for professor-selected glycans against the test set
 - build threshold-based similarity clouds and HTML reports for the selected glycans
+- compare alternate embedding pooling strategies by changing one notebook setting
+  and saving each run under its own pooling-labeled folder
 
 Main outputs:
 - `test_corpus_sequences.csv`
@@ -434,6 +548,10 @@ Notes:
   classification-finetuned checkpoint, using a `CHECKPOINT_SOURCE` toggle plus
   `CLASSIFIER_RUN_LABEL` when the classification checkpoint layout is used
 - the notebook saves outputs under `results/similarity_scaleup/`
+- the notebook now exposes `POOLING_STRATEGY`, and the saved `OUTPUT_RUN_LABEL`
+  should carry a suffix such as `mean_pool` or `max_pool` so comparison runs
+  stay separated in both Drive and `public_reports/`
+- `similarity_scaleup_config.json` records the pooling choice for each run
 - the notebook can also prepare a clean browser-facing export in Drive that is
   intended to be copied into a run-specific folder such as
   `public_reports/08_similarity_scaleup/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrained_mlm/live_extended/`
@@ -675,6 +793,11 @@ The current training notebook supports:
 - checkpoint-resume runs
 - continuation runs from `best_model`
 
+Continuation runs should be saved as new sibling experiment folders under
+`checkpoints/<tokenizer_family>/`. They should not create nested continuation
+directories inside the source run, because downstream notebooks expect a flat
+`.../<experiment_name>/best_model` layout.
+
 The default notebook configuration currently shown in the training workflow is:
 
 - MLM probability: `0.15`
@@ -690,8 +813,8 @@ names so runs can be compared later without overwriting older results.
 ## Architectures Run So Far
 
 Based on the Drive-side run registry in
-`MyDrive/ProjectRoot/registry/run_index.csv`, this project has already been
-used to train more than one model architecture.
+`<PROJECT_ROOT>/registry/run_index.csv`, this project has already been used to
+train more than one model architecture.
 
 Recorded architecture families:
 
@@ -753,16 +876,18 @@ To reproduce this workflow, a new user will need:
 
 - this repository
 - the raw glycan dataset
-- a Drive folder matching the expected `FolderName` structure
+- a Drive folder matching the expected project-root structure
 - access to a Colab or Python environment with the required packages installed
 
-Most notebook paths assume Google Drive mounting in Colab and a project root
-of:
+Most notebook paths assume Google Drive mounting in Colab and a user-edited
+project root such as:
 
-- `/content/drive/MyDrive/FolderName`
+- `/content/drive/MyDrive/ProjectRoot`
+- `/content/drive/MyDrive/GlycanProject`
 
-If this path changes, the notebook configuration cells should be updated
-accordingly.
+The exact folder name is not fixed by the repository. Update `PROJECT_ROOT` in
+each notebook's user settings cell so it matches the Drive folder you are
+actually using.
 
 ## Current Status
 
