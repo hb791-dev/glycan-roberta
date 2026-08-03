@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
+import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -343,9 +346,9 @@ def save_preprocessing_outputs(
     output_dir = train_dataset_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    torch.save(datasets["train"], train_dataset_path)
-    torch.save(datasets["val"], val_dataset_path)
-    torch.save(datasets["test"], test_dataset_path)
+    _save_torch_artifact_with_verification(datasets["train"], train_dataset_path)
+    _save_torch_artifact_with_verification(datasets["val"], val_dataset_path)
+    _save_torch_artifact_with_verification(datasets["test"], test_dataset_path)
     preview_df.to_csv(tokenization_preview_path, index=False)
     preprocessing_summary_path.write_text(
         json.dumps(summary_payload, indent=2),
@@ -403,3 +406,114 @@ def save_preprocessing_run(
         "summary_payload": summary_payload,
         "saved_paths": saved_paths,
     }
+
+
+def _write_torch_artifact_to_temp_file(
+    artifact: dict[str, torch.Tensor],
+    suffix: str = ".pt",
+) -> Path:
+    """Serialize one tensor artifact to a local temporary file first.
+
+    Writing to a local temporary path avoids depending on the Google Drive mount
+    while PyTorch is still serializing a large object.
+    """
+
+    temp_dir = Path(tempfile.gettempdir()) / "glycan_roberta_notebook03"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(
+        suffix=suffix,
+        prefix="dataset_artifact_",
+        dir=temp_dir,
+        delete=False,
+    ) as temp_file:
+        temp_path = Path(temp_file.name)
+
+    try:
+        torch.save(artifact, temp_path)
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+    return temp_path
+
+
+def _validate_saved_copy(
+    source_path: Path,
+    target_path: Path,
+    previous_size: int | None,
+    previous_mtime: float | None,
+) -> str | None:
+    """Return an error message when a copied artifact does not look updated."""
+
+    if not target_path.exists():
+        return f"Target file was not created: {target_path}"
+
+    source_size = source_path.stat().st_size
+    target_stat = target_path.stat()
+
+    if target_stat.st_size != source_size:
+        return (
+            "Saved file size does not match the local artifact size. "
+            f"Expected {source_size} bytes but found {target_stat.st_size} bytes."
+        )
+
+    if (
+        previous_size is not None
+        and previous_mtime is not None
+        and target_stat.st_size == previous_size
+        and target_stat.st_mtime <= previous_mtime
+    ):
+        return (
+            "Saved file metadata did not change after the copy. The Google Drive "
+            "mount may still be serving the older file."
+        )
+
+    return None
+
+
+def _save_torch_artifact_with_verification(
+    artifact: dict[str, torch.Tensor],
+    target_path: str | Path,
+    num_attempts: int = 3,
+    retry_delay_seconds: float = 2.0,
+) -> Path:
+    """Save one tensor artifact with copy verification and limited retries."""
+
+    target_path = Path(target_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_path = _write_torch_artifact_to_temp_file(artifact)
+    previous_stat = target_path.stat() if target_path.exists() else None
+    previous_size = previous_stat.st_size if previous_stat else None
+    previous_mtime = previous_stat.st_mtime if previous_stat else None
+    attempt_errors: list[str] = []
+
+    try:
+        for attempt_index in range(1, num_attempts + 1):
+            if target_path.exists():
+                target_path.unlink()
+
+            shutil.copy2(temp_path, target_path)
+            time.sleep(retry_delay_seconds)
+
+            validation_error = _validate_saved_copy(
+                source_path=temp_path,
+                target_path=target_path,
+                previous_size=previous_size,
+                previous_mtime=previous_mtime,
+            )
+            if validation_error is None:
+                return target_path
+
+            attempt_errors.append(
+                f"Attempt {attempt_index} failed for {target_path.name}: {validation_error}"
+            )
+
+        joined_errors = "\n".join(attempt_errors)
+        raise IOError(
+            "Notebook 03 could not verify that the tensor artifact was updated on "
+            f"disk after {num_attempts} attempts.\n{joined_errors}"
+        )
+    finally:
+        temp_path.unlink(missing_ok=True)
