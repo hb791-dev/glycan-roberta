@@ -50,6 +50,7 @@ SUPPORTED_COLOR_COLUMNS = (
 )
 
 _N_GLYCAN_KEYWORDS = (
+    "n-linked",
     "n-glycan",
     "n glycan",
     "high mannose",
@@ -60,9 +61,16 @@ _N_GLYCAN_KEYWORDS = (
 )
 
 _O_GLYCAN_KEYWORDS = (
+    "o-linked",
     "o-glycan",
     "o glycan",
     "mucin",
+    "o-mannose",
+    "o-fucose",
+    "o-glucose",
+    "o-glcnac",
+    "o-galactose",
+    "o-galnac",
     "ogalnac",
 )
 
