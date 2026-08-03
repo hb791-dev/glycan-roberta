@@ -210,7 +210,8 @@ def _max_pool_hidden_states(hidden_states: torch.Tensor, content_mask: torch.Ten
     pooled_hidden = masked_hidden_states.max(dim=1).values
     # If a row somehow loses every token after masking, fall back to zeros instead
     # of keeping -inf values in the saved embeddings.
-    pooled_hidden[~expanded_mask.any(dim=1)] = 0.0
+    empty_rows = ~content_mask.any(dim=1)
+    pooled_hidden[empty_rows] = 0.0
     return pooled_hidden
 
 
