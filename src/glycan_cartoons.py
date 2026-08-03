@@ -37,6 +37,57 @@ def _post_form_json(url: str, data: dict[str, Any], timeout: int = 60) -> Any:
     return json.loads(text)
 
 
+def _normalize_task_submission_payload(base_url: str, payload: Any) -> dict[str, str]:
+    """Return one dict containing a task ID from a GlyLookup/Glymage submit response.
+
+    The glyomics services have returned a few different shapes over time, including
+    a list of task dictionaries, a list of raw task-ID strings, and a single task-ID
+    string. Normalize them here so the rest of the notebook code can always read
+    ``submission["id"]`` safely.
+    """
+    normalized_payload = payload
+    if isinstance(normalized_payload, list):
+        if not normalized_payload:
+            raise RuntimeError(f"No task ID returned from {base_url}.")
+        normalized_payload = normalized_payload[0]
+
+    if isinstance(normalized_payload, dict):
+        task_id = str(
+            normalized_payload.get("id")
+            or normalized_payload.get("task_id")
+            or normalized_payload.get("taskid")
+            or ""
+        ).strip()
+        if task_id:
+            return {"id": task_id}
+
+    elif isinstance(normalized_payload, str):
+        task_id = normalized_payload.strip()
+        if task_id:
+            return {"id": task_id}
+
+    raise RuntimeError(f"Unexpected task submission payload from {base_url}: {normalized_payload!r}")
+
+
+def _normalize_task_retrieval_payload(base_url: str, payload: Any) -> dict[str, Any]:
+    """Return one dict-like retrieval payload from a GlyLookup/Glymage retrieve response."""
+    normalized_payload = payload
+    if isinstance(normalized_payload, list):
+        if not normalized_payload:
+            raise RuntimeError(f"No retrieval payload returned from {base_url}.")
+        normalized_payload = normalized_payload[0]
+
+    if isinstance(normalized_payload, dict):
+        return normalized_payload
+
+    if isinstance(normalized_payload, str):
+        status_text = normalized_payload.strip()
+        if status_text:
+            return {"status": status_text}
+
+    raise RuntimeError(f"Unexpected task retrieval payload from {base_url}: {normalized_payload!r}")
+
+
 def _download_binary(url: str, timeout: int = 60) -> bytes:
     """Download one image payload as raw bytes."""
     request = Request(url, method="GET")
@@ -259,9 +310,7 @@ def _submit_task(
         },
         timeout=timeout,
     )
-    if not submission:
-        raise RuntimeError(f"No task ID returned from {base_url}.")
-    return submission[0]
+    return _normalize_task_submission_payload(base_url, submission)
 
 
 def _retrieve_task(
@@ -278,9 +327,7 @@ def _retrieve_task(
         },
         timeout=timeout,
     )
-    if not retrieval:
-        raise RuntimeError(f"No retrieval payload returned from {base_url}.")
-    return retrieval[0]
+    return _normalize_task_retrieval_payload(base_url, retrieval)
 
 
 def _request_task(
