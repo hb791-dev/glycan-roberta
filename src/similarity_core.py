@@ -177,12 +177,22 @@ def _build_content_mask(encoded_batch, tokenizer) -> torch.Tensor:
 
     The tokenizer adds padding and model-specific special tokens such as CLS/SEP.
     Those tokens are useful for the model internals, but they should not count
-    toward the mean-pooled embedding that we use for similarity.
+    toward the pooled embedding that we use for similarity.
     """
     content_mask = encoded_batch["attention_mask"].bool()
     for token_id in tokenizer.all_special_ids:
         content_mask &= encoded_batch["input_ids"] != token_id
     return content_mask
+
+
+def normalize_pooling_strategy(pooling_strategy: str | None = None) -> str:
+    """Return one validated pooling-strategy label."""
+    normalized = str(pooling_strategy or "mean").strip().lower()
+    if normalized not in {"mean", "max"}:
+        raise ValueError(
+            f"Unsupported pooling_strategy {pooling_strategy!r}. Expected 'mean' or 'max'."
+        )
+    return normalized
 
 
 def _mean_pool_hidden_states(hidden_states: torch.Tensor, content_mask: torch.Tensor) -> torch.Tensor:
@@ -191,6 +201,17 @@ def _mean_pool_hidden_states(hidden_states: torch.Tensor, content_mask: torch.Te
     pooled_hidden = (hidden_states * expanded_mask).sum(dim=1)
     token_counts = expanded_mask.sum(dim=1).clamp(min=1e-9)
     return pooled_hidden / token_counts
+
+
+def _max_pool_hidden_states(hidden_states: torch.Tensor, content_mask: torch.Tensor) -> torch.Tensor:
+    """Take the per-dimension maximum across kept token positions for one batch."""
+    expanded_mask = content_mask.unsqueeze(-1)
+    masked_hidden_states = hidden_states.masked_fill(~expanded_mask, float("-inf"))
+    pooled_hidden = masked_hidden_states.max(dim=1).values
+    # If a row somehow loses every token after masking, fall back to zeros instead
+    # of keeping -inf values in the saved embeddings.
+    pooled_hidden[~expanded_mask.any(dim=1)] = 0.0
+    return pooled_hidden
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +226,9 @@ def embed_sequences(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
 ) -> torch.Tensor:
-    """Embed glycan sequences with mean pooling over real content tokens.
+    """Embed glycan sequences with configurable pooling over real content tokens.
 
     The function works in mini-batches so larger similarity jobs can run without
     trying to place the entire dataset on the GPU or CPU at once.
@@ -221,6 +243,7 @@ def embed_sequences(
     )
     encoder = _get_encoder(model)
     use_max_length = _effective_max_length(tokenizer, max_length)
+    normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
     embedding_batches = []
 
     for start_index in range(0, len(sequences), batch_size):
@@ -237,7 +260,10 @@ def embed_sequences(
 
         hidden_states = encoder(**encoded_batch).last_hidden_state
         content_mask = _build_content_mask(encoded_batch, tokenizer)
-        pooled_batch = _mean_pool_hidden_states(hidden_states, content_mask)
+        if normalized_pooling_strategy == "mean":
+            pooled_batch = _mean_pool_hidden_states(hidden_states, content_mask)
+        else:
+            pooled_batch = _max_pool_hidden_states(hidden_states, content_mask)
         embedding_batches.append(pooled_batch.cpu())
 
     return torch.cat(embedding_batches, dim=0)
@@ -250,6 +276,7 @@ def compare_sequence_pair(
     model,
     device: str | torch.device | None = None,
     max_length: int | None = None,
+    pooling_strategy: str = "mean",
 ) -> dict:
     """Embed two sequences and return cosine similarity plus token previews."""
     embeddings = embed_sequences(
@@ -259,6 +286,7 @@ def compare_sequence_pair(
         device=device,
         max_length=max_length,
         batch_size=2,
+        pooling_strategy=pooling_strategy,
     )
     cosine_similarity = torch.nn.functional.cosine_similarity(embeddings[0:1], embeddings[1:2]).item()
 
@@ -277,6 +305,7 @@ def compare_sequence_pairs(
     model,
     device: str | torch.device | None = None,
     max_length: int | None = None,
+    pooling_strategy: str = "mean",
 ) -> "pd.DataFrame":
     """Return one comparison row per named pair of glycan sequences.
 
@@ -295,6 +324,7 @@ def compare_sequence_pairs(
             model=model,
             device=device,
             max_length=max_length,
+            pooling_strategy=pooling_strategy,
         )
         row = {
             "pair_name": pair["pair_name"],
@@ -318,6 +348,7 @@ def similarity_matrix(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
 ) -> torch.Tensor:
     """Return the full pairwise cosine-similarity matrix for a sequence list."""
     embeddings = embed_sequences(
@@ -327,6 +358,7 @@ def similarity_matrix(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=pooling_strategy,
     )
     # Normalize first so the matrix multiply is exactly cosine similarity.
     normalized_embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
@@ -340,6 +372,7 @@ def similarity_matrix_dataframe(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
 ) -> "pd.DataFrame":
     """Return the pairwise cosine-similarity matrix as a labeled dataframe."""
     import pandas as pd
@@ -351,6 +384,7 @@ def similarity_matrix_dataframe(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=pooling_strategy,
     )
     return pd.DataFrame(similarity_tensor.numpy(), index=sequences, columns=sequences)
 
@@ -451,6 +485,7 @@ def run_similarity_analysis(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
     model_dir=None,
 ) -> dict:
     """Run the original curated-pair similarity workflow end to end.
@@ -467,6 +502,7 @@ def run_similarity_analysis(
         model=model,
         device=device,
         max_length=max_length,
+        pooling_strategy=pooling_strategy,
     )
     tokenization_preview_df = build_tokenization_preview(preview_sequences, tokenizer)
     similarity_df = similarity_matrix_dataframe(
@@ -476,8 +512,10 @@ def run_similarity_analysis(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=pooling_strategy,
     )
 
+    normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
     config_payload = {
         "analysis_type": "curated_pairs",
         "model_dir": str(model_dir) if model_dir is not None else "",
@@ -486,6 +524,7 @@ def run_similarity_analysis(
         "matrix_sequences": list(matrix_sequences),
         "max_length": max_length,
         "batch_size": batch_size,
+        "pooling_strategy": normalized_pooling_strategy,
     }
     saved_paths = save_similarity_outputs(
         pair_results_df=pair_results_df,

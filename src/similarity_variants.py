@@ -26,6 +26,7 @@ from src.similarity_core import (
     _image_path_to_data_uri,
     build_tokenization_preview,
     build_variant_preview_sequences,
+    normalize_pooling_strategy,
     load_similarity_artifacts,
     run_similarity_analysis as run_curated_pair_similarity_analysis,
     embed_sequences,
@@ -258,6 +259,7 @@ def compare_anchor_variants(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
 ) -> "pd.DataFrame":
     """Compare each anchor glycan against its configured variants.
 
@@ -277,6 +279,7 @@ def compare_anchor_variants(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=pooling_strategy,
     )
     normalized_embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
     sequence_to_index = {sequence: index for index, sequence in enumerate(preview_sequences)}
@@ -333,6 +336,7 @@ def build_anchor_similarity_matrices(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
 ) -> dict[str, "pd.DataFrame"]:
     """Return one local similarity matrix per anchor group.
 
@@ -358,6 +362,7 @@ def build_anchor_similarity_matrices(
             device=device,
             max_length=max_length,
             batch_size=batch_size,
+            pooling_strategy=pooling_strategy,
         )
         for anchor_id, sequences in anchor_to_sequences.items()
     }
@@ -957,6 +962,7 @@ def run_similarity_analysis(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
     model_dir=None,
 ) -> dict:
     """Compatibility wrapper for the original curated-pair workflow.
@@ -975,6 +981,7 @@ def run_similarity_analysis(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=pooling_strategy,
         model_dir=model_dir,
     )
 
@@ -992,12 +999,14 @@ def run_variant_similarity_analysis(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
     model_dir=None,
 ) -> dict:
     """Run anchor-to-variant similarity analysis and save HTML reports."""
     import pandas as pd
 
     preview_sequences = build_variant_preview_sequences(variant_records)
+    normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
     variant_results_df = compare_anchor_variants(
         variant_records=variant_records,
         tokenizer=tokenizer,
@@ -1005,6 +1014,7 @@ def run_variant_similarity_analysis(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=normalized_pooling_strategy,
     )
     tokenization_preview_df = build_tokenization_preview(preview_sequences, tokenizer)
     existing_cartoon_manifest_df = None
@@ -1028,6 +1038,7 @@ def run_variant_similarity_analysis(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=normalized_pooling_strategy,
     )
 
     config_payload = {
@@ -1041,6 +1052,7 @@ def run_variant_similarity_analysis(
         "lookup_timeout": lookup_timeout,
         "max_length": max_length,
         "batch_size": batch_size,
+        "pooling_strategy": normalized_pooling_strategy,
     }
     saved_paths = save_variant_similarity_outputs(
         variant_results_df=variant_results_df,
@@ -1074,6 +1086,7 @@ def run_variant_similarity_model_suite(
     lookup_timeout: int = 60,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
 ) -> dict[str, dict]:
     """Run notebook-7 variant analysis across multiple saved model checkpoints.
 
@@ -1118,6 +1131,7 @@ def run_variant_similarity_model_suite(
                     device=device,
                     max_length=max_length,
                     batch_size=batch_size,
+                    pooling_strategy=pooling_strategy,
                     model_dir=model_dir,
                 ),
             }

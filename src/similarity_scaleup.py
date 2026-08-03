@@ -23,7 +23,7 @@ from src.glycan_cartoons import (
     cartoon_lookup_from_manifest,
     format_glycan_sequence_block,
 )
-from src.similarity_core import _image_path_to_data_uri, embed_sequences
+from src.similarity_core import _image_path_to_data_uri, embed_sequences, normalize_pooling_strategy
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -130,6 +130,7 @@ def build_embedding_lookup_for_dataframe(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
 ) -> dict:
     """Embed one dataframe of glycans while reusing duplicate sequence embeddings.
 
@@ -147,6 +148,7 @@ def build_embedding_lookup_for_dataframe(
             sequence_to_index[sequence] = len(unique_sequences)
             unique_sequences.append(sequence)
 
+    normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
     unique_embeddings = embed_sequences(
         unique_sequences,
         tokenizer=tokenizer,
@@ -154,6 +156,7 @@ def build_embedding_lookup_for_dataframe(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=normalized_pooling_strategy,
     )
     normalized_unique_embeddings = torch.nn.functional.normalize(unique_embeddings, p=2, dim=1)
 
@@ -175,6 +178,7 @@ def build_embedding_lookup_for_dataframe(
         "normalized_unique_embeddings": normalized_unique_embeddings,
         "row_embeddings": row_embeddings,
         "normalized_embeddings": normalized_row_embeddings,
+        "pooling_strategy": normalized_pooling_strategy,
     }
 
 
@@ -1926,6 +1930,7 @@ def run_scaleup_similarity_analysis(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     batch_size: int = 32,
+    pooling_strategy: str = "mean",
     all_vs_all_top_k: int = 10,
     html_neighbor_limit: int = 50,
     html_cloud_limit: int = 100,
@@ -1936,6 +1941,7 @@ def run_scaleup_similarity_analysis(
     """Run the full test-set similarity scale-up workflow and save the outputs."""
     cleaned_corpus_df = _clean_similarity_dataframe(corpus_df, accession_col=accession_col, sequence_col=sequence_col)
     cleaned_query_df = _clean_similarity_dataframe(query_df, accession_col=accession_col, sequence_col=sequence_col)
+    normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
 
     # First embed the full held-out test set. Those embeddings power both the
     # all-vs-all background distribution and the specific-vs-all query analysis.
@@ -1948,6 +1954,7 @@ def run_scaleup_similarity_analysis(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=normalized_pooling_strategy,
     )
     # The selected glycans do not need to be members of the held-out test split.
     # Embed them separately so specific-vs-all can compare an external query panel
@@ -1961,6 +1968,7 @@ def run_scaleup_similarity_analysis(
         device=device,
         max_length=max_length,
         batch_size=batch_size,
+        pooling_strategy=normalized_pooling_strategy,
     )
     query_normalized_embeddings = query_embedding_bundle["normalized_embeddings"]
 
@@ -2013,6 +2021,7 @@ def run_scaleup_similarity_analysis(
         "lookup_timeout": int(lookup_timeout),
         "max_length": max_length,
         "batch_size": int(batch_size),
+        "pooling_strategy": normalized_pooling_strategy,
         "all_vs_all_top_k": int(all_vs_all_top_k),
         "html_neighbor_limit": int(html_neighbor_limit),
         "html_cloud_limit": int(html_cloud_limit),
