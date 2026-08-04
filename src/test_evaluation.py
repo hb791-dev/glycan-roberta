@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import torch
@@ -16,6 +19,136 @@ from sklearn.metrics import (
 )
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForMaskedLM, PreTrainedTokenizerFast, pipeline
+
+from src.notebook_utils import require_existing_path, validate_output_paths
+
+
+@dataclass(frozen=True)
+class TestEvaluationPaths:
+    """Bundle the standard input and output paths for notebook 06.
+
+    Keeping these paths together makes the notebook easier to read because the
+    notebook can refer to ``paths.best_model_dir`` or
+    ``paths.per_class_metrics_path`` instead of rebuilding file names inline.
+    """
+
+    tokenizer_family: str
+    setting_label: str
+    experiment_name: str
+    project_root: Path
+    run_index_path: Path
+    best_model_dir: Path
+    test_dataset_path: Path
+    results_dir: Path
+    test_summary_json_path: Path
+    test_summary_row_path: Path
+    masking_summary_path: Path
+    per_class_metrics_path: Path
+    top1_roc_plot_path: Path
+    top1_roc_summary_path: Path
+    top1_roc_per_class_path: Path
+    top1_pr_plot_path: Path
+    top1_pr_summary_path: Path
+    top1_pr_per_class_path: Path
+    qualitative_probe_path: Path
+
+    def output_paths(self) -> dict[str, Path]:
+        """Return the files this notebook expects to create or replace."""
+
+        return {
+            "test_summary_json_path": self.test_summary_json_path,
+            "test_summary_row_path": self.test_summary_row_path,
+            "masking_summary_path": self.masking_summary_path,
+            "per_class_metrics_path": self.per_class_metrics_path,
+            "top1_roc_plot_path": self.top1_roc_plot_path,
+            "top1_roc_summary_path": self.top1_roc_summary_path,
+            "top1_roc_per_class_path": self.top1_roc_per_class_path,
+            "top1_pr_plot_path": self.top1_pr_plot_path,
+            "top1_pr_summary_path": self.top1_pr_summary_path,
+            "top1_pr_per_class_path": self.top1_pr_per_class_path,
+            "qualitative_probe_path": self.qualitative_probe_path,
+        }
+
+
+def resolve_setting_label(
+    tokenizer_family: str,
+    tokenizer_settings: dict[str, str],
+) -> str:
+    """Return the saved dataset-setting label for one tokenizer family."""
+
+    if tokenizer_family not in tokenizer_settings:
+        supported_families = ", ".join(sorted(tokenizer_settings))
+        raise ValueError(
+            f"Unsupported tokenizer family: {tokenizer_family}. "
+            f"Supported families: {supported_families}"
+        )
+
+    return tokenizer_settings[tokenizer_family]
+
+
+def build_test_evaluation_paths(
+    project_root: str | Path,
+    tokenizer_family: str,
+    setting_label: str,
+    experiment_name: str,
+) -> TestEvaluationPaths:
+    """Build the standard input and output paths for notebook 06."""
+
+    project_root = Path(project_root)
+    results_dir = (
+        project_root
+        / "results"
+        / "test_evaluation"
+        / tokenizer_family
+        / experiment_name
+    )
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    return TestEvaluationPaths(
+        tokenizer_family=tokenizer_family,
+        setting_label=setting_label,
+        experiment_name=experiment_name,
+        project_root=project_root,
+        run_index_path=project_root / "registry" / "run_index.csv",
+        best_model_dir=(
+            project_root
+            / "checkpoints"
+            / tokenizer_family
+            / experiment_name
+            / "best_model"
+        ),
+        test_dataset_path=project_root
+        / "tokenized_datasets"
+        / tokenizer_family
+        / setting_label
+        / "test_dataset.pt",
+        results_dir=results_dir,
+        test_summary_json_path=results_dir / "test_summary.json",
+        test_summary_row_path=results_dir / "test_summary_row.csv",
+        masking_summary_path=results_dir / "masking_summary.csv",
+        per_class_metrics_path=results_dir / "per_class_metrics.csv",
+        top1_roc_plot_path=results_dir / "top1_correctness_roc_curves.png",
+        top1_roc_summary_path=results_dir / "top1_correctness_roc_summary.csv",
+        top1_roc_per_class_path=results_dir / "top1_correctness_roc_per_class.csv",
+        top1_pr_plot_path=results_dir / "top1_correctness_pr_curves.png",
+        top1_pr_summary_path=results_dir / "top1_correctness_pr_summary.csv",
+        top1_pr_per_class_path=results_dir / "top1_correctness_pr_per_class.csv",
+        qualitative_probe_path=results_dir / "qualitative_probe_results.csv",
+    )
+
+
+def validate_test_evaluation_run(
+    paths: TestEvaluationPaths,
+    overwrite_existing_outputs: bool,
+) -> None:
+    """Validate required inputs and enforce the notebook overwrite policy."""
+
+    require_existing_path(paths.best_model_dir, "Best model directory")
+    require_existing_path(paths.test_dataset_path, "Tokenized test dataset")
+    validate_output_paths(
+        output_paths=paths.output_paths(),
+        overwrite_existing_outputs=overwrite_existing_outputs,
+    )
 
 
 class GlycanDataset(Dataset):
