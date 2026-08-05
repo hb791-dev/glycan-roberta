@@ -37,6 +37,13 @@ MATCH_KEYS = [
 ]
 SUMMARY_COLUMNS = ["mean", "median", "std_dev", "min", "q05", "q25", "q75", "q95", "max"]
 
+REPORT_PATH_PREFIXES = (
+    "/content/drive/MyDrive/",
+    "/drive/MyDrive/",
+    "file:///content/drive/MyDrive/",
+    "file:///drive/MyDrive/",
+)
+
 
 HTML_STYLE = """
 :root {
@@ -747,6 +754,36 @@ def _render_dataframe_html(frame_df: "pd.DataFrame") -> str:
     return frame_df.to_html(index=False, classes="", border=0, escape=False)
 
 
+def _make_report_path_relative(path_value: str | Path | object) -> str:
+    """Convert local absolute paths into project-relative report labels."""
+    text = str(path_value or "").strip()
+    if not text:
+        return ""
+
+    normalized_text = text.replace("\\", "/")
+    for prefix in REPORT_PATH_PREFIXES:
+        if normalized_text.startswith(prefix):
+            relative_text = normalized_text[len(prefix):].lstrip("/")
+            relative_parts = relative_text.split("/", 1)
+            return relative_parts[1] if len(relative_parts) == 2 else relative_parts[0]
+
+    if normalized_text.startswith("/Users/"):
+        relative_parts = normalized_text.split("/")[4:]
+        if relative_parts:
+            return "/".join(relative_parts)
+
+    return normalized_text
+
+
+def _prepare_matched_run_summary_for_report(frame_df: "pd.DataFrame") -> "pd.DataFrame":
+    """Hide machine-specific path prefixes before rendering the run summary table."""
+    report_df = frame_df.copy()
+    for column_name in ("run_dir", "model_dir"):
+        if column_name in report_df.columns:
+            report_df[column_name] = report_df[column_name].map(_make_report_path_relative)
+    return report_df
+
+
 def render_pooling_metric_comparison_html_report(
     output_dir: str | Path,
     report_title: str,
@@ -766,6 +803,10 @@ def render_pooling_metric_comparison_html_report(
     query_note = ", ".join(str(value) for value in (inspect_query_accessions or [])) or "first configured queries"
     summary_df = comparison_tables["pooling_similarity_summary"]
     overlap_summary_df = comparison_tables["pooling_top_k_overlap_summary"]
+    report_model_dir = _make_report_path_relative(shared_model_dir)
+    matched_run_summary_df = _prepare_matched_run_summary_for_report(
+        comparison_tables["matched_pooling_run_summary"]
+    )
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -788,12 +829,12 @@ def render_pooling_metric_comparison_html_report(
     <section class="card">
       <h2>What This Report Checks</h2>
       <p>This report compares notebook-8 outputs only after holding the model checkpoint, query set, and corpus fixed. The only intended change is the pooling rule.</p>
-      <p class="mono">Shared model_dir: {escape(shared_model_dir)}</p>
+      <p class="mono">Shared model_dir: {escape(report_model_dir)}</p>
     </section>
 
     <section class="card">
       <h2>Matched Run Summary</h2>
-      <div class="table-scroll">{_render_dataframe_html(comparison_tables["matched_pooling_run_summary"])}</div>
+      <div class="table-scroll">{_render_dataframe_html(matched_run_summary_df)}</div>
     </section>
 
     <section class="card">
