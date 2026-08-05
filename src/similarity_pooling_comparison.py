@@ -47,39 +47,56 @@ REPORT_PATH_PREFIXES = (
 
 HTML_STYLE = """
 :root {
-  --ink: #202634;
-  --muted: #5d6b7e;
-  --paper: #f4efe6;
-  --card: #fffaf2;
-  --line: #dbcdb7;
-  --accent: #8b4a25;
+  --ink: #1f2937;
+  --muted: #5b6472;
+  --paper: #f3f5f8;
+  --card: #ffffff;
+  --line: #d7dde6;
+  --line-strong: #bcc6d4;
+  --accent: #0f4c81;
+  --accent-soft: #e8f1fb;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
   color: var(--ink);
-  background: linear-gradient(180deg, #fbf6ec 0%, #efe4d4 100%);
-  font-family: Georgia, "Times New Roman", serif;
-  line-height: 1.45;
+  background:
+    radial-gradient(circle at top left, #ffffff 0%, rgba(255, 255, 255, 0) 34%),
+    linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+  font-family: "Aptos", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.55;
 }
 header {
-  padding: 34px 42px 24px;
+  padding: 32px 40px 24px;
   border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.84);
+  backdrop-filter: blur(10px);
 }
 .container {
-  padding: 24px 42px 48px;
+  max-width: 1680px;
+  margin: 0 auto;
+  padding: 24px 40px 56px;
 }
 .card {
   margin: 18px 0;
-  padding: 18px;
-  background: rgba(255, 250, 242, 0.92);
+  padding: 22px 24px;
+  background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 18px;
-  box-shadow: 0 10px 28px rgba(91, 67, 37, 0.08);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
 }
 h1, h2, h3 { margin: 0 0 12px; line-height: 1.1; }
-h1 { font-size: 34px; }
-h2 { font-size: 24px; margin-top: 2px; }
+h1 {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+h2 {
+  font-size: 22px;
+  margin-top: 2px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
 h3 { font-size: 18px; }
 p, li { margin: 0 0 10px; }
 ul { margin: 0; padding-left: 20px; }
@@ -88,28 +105,50 @@ ul { margin: 0; padding-left: 20px; }
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 14px;
+  border-radius: 12px;
   background: white;
   border: 1px solid var(--line);
 }
 .table-scroll {
   overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: white;
 }
-table {
+table.report-table {
   width: 100%;
   border-collapse: collapse;
   background: white;
-  border-radius: 14px;
-  overflow: hidden;
+  min-width: 980px;
 }
-th, td {
+table.report-table th,
+table.report-table td {
   border-bottom: 1px solid var(--line);
-  padding: 8px 10px;
+  padding: 10px 12px;
   text-align: left;
   vertical-align: top;
   font-size: 13px;
+  white-space: normal;
+  word-break: break-word;
 }
-th { background: #efe1cb; }
+table.report-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7f9fc;
+  border-bottom: 1px solid var(--line-strong);
+  font-weight: 650;
+}
+table.report-table tbody tr:nth-child(even) {
+  background: #fbfcfe;
+}
+table.report-table tbody tr:hover {
+  background: var(--accent-soft);
+}
+table.report-table td:nth-child(3),
+table.report-table td:nth-child(4) {
+  min-width: 300px;
+}
 .badge-row {
   display: flex;
   flex-wrap: wrap;
@@ -121,16 +160,126 @@ th { background: #efe1cb; }
   align-items: center;
   border-radius: 999px;
   border: 1px solid var(--line);
-  padding: 4px 10px;
-  background: white;
+  padding: 5px 10px;
+  background: var(--accent-soft);
   font-size: 12px;
+  color: var(--accent);
+  font-weight: 600;
 }
 .mono {
-  font-family: "Menlo", "Consolas", monospace;
+  display: inline-block;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f7f9fc;
+  border: 1px solid var(--line);
+  font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
   font-size: 12px;
+}
+.callout {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #f9fbfd;
+}
+.callout h3 {
+  margin-bottom: 8px;
+}
+.callout ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.callout li {
+  margin-bottom: 6px;
+}
+.term-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 18px;
+  margin-top: 12px;
+}
+.term-card {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+.term-card strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent);
+}
+.gallery-grid {
+  display: grid;
+  gap: 18px;
+}
+.query-gallery {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fbfcfe;
+  overflow: hidden;
+}
+.query-gallery-header {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+  border-bottom: 1px solid var(--line);
+  background: white;
+}
+.query-gallery-copy h3 {
+  margin-bottom: 6px;
+}
+.query-gallery-copy p {
+  color: var(--muted);
+}
+.cartoon-box,
+.mini-cartoon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  overflow: hidden;
+}
+.cartoon-box {
+  min-height: 160px;
+  padding: 10px;
+}
+.mini-cartoon {
+  width: 76px;
+  min-width: 76px;
+  height: 76px;
+  padding: 6px;
+}
+.cartoon-box img,
+.mini-cartoon img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+.missing-cartoon {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.query-neighbor-table {
+  padding: 0 18px 18px;
+}
+.neighbor-cartoon-cell {
+  width: 94px;
+}
+.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 @media (max-width: 760px) {
   header, .container { padding-left: 18px; padding-right: 18px; }
+  .card { padding: 18px; }
+  h1 { font-size: 28px; }
+  h2 { font-size: 20px; }
+  .query-gallery-header { grid-template-columns: 1fr; }
 }
 """
 
@@ -751,7 +900,136 @@ def _render_dataframe_html(frame_df: "pd.DataFrame") -> str:
     """Render one dataframe with compact number formatting."""
     if frame_df.empty:
         return "<p class='subtle'>No rows were generated for this section.</p>"
-    return frame_df.to_html(index=False, classes="", border=0, escape=False)
+    return frame_df.to_html(index=False, classes="report-table", border=0, escape=False)
+
+
+def _safe_stem(value: str) -> str:
+    """Create a stable filename-friendly stem for copied report assets."""
+    safe_chars = []
+    for character in str(value):
+        if character.isalnum() or character in {"-", "_"}:
+            safe_chars.append(character)
+        else:
+            safe_chars.append("_")
+    return "".join(safe_chars).strip("_") or "item"
+
+
+def _relative_path(path: str | Path, start_dir: str | Path) -> str:
+    """Return a browser-friendly relative path inside the HTML report folder."""
+    return Path(path).resolve().relative_to(Path(start_dir).resolve()).as_posix()
+
+
+def _resolve_cartoon_source_path(local_image_path: str | Path, run_dir: str | Path) -> Path | None:
+    """Find a cached cartoon image even when a manifest carries a Colab path."""
+    candidate_path = Path(str(local_image_path))
+    if candidate_path.exists():
+        return candidate_path
+
+    fallback_path = Path(run_dir) / "cartoons" / candidate_path.name
+    if fallback_path.exists():
+        return fallback_path
+
+    return None
+
+
+def _copy_cartoon_for_report(
+    source_path: Path | None,
+    asset_dir: Path,
+    image_key: str,
+) -> str | None:
+    """Copy one cached cartoon into the HTML assets folder and return its path."""
+    if source_path is None:
+        return None
+
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    output_path = asset_dir / f"{_safe_stem(image_key)}{source_path.suffix.lower()}"
+    if not output_path.exists():
+        shutil.copy2(source_path, output_path)
+    return str(output_path)
+
+
+def build_cartoon_lookup_from_run_manifests(
+    run_specs: Sequence[dict[str, str | Path]],
+) -> dict[str, dict[str, dict[str, str]]]:
+    """Build a sequence/accession lookup for notebook-8 cartoons already cached on disk."""
+    lookup: dict[str, dict[str, dict[str, str]]] = {
+        "by_sequence": {},
+        "by_accession": {},
+    }
+    for spec in run_specs:
+        run_dir = Path(spec["run_dir"])
+        manifest_path = run_dir / "scaleup_cartoon_manifest.csv"
+        if not manifest_path.exists():
+            continue
+
+        manifest_df = pd.read_csv(manifest_path)
+        for row in manifest_df.itertuples(index=False):
+            sequence = str(getattr(row, "sequence", "")).strip()
+            accession = str(getattr(row, "accession", "")).strip()
+            local_image_path = getattr(row, "local_image_path", "")
+            source_path = _resolve_cartoon_source_path(local_image_path, run_dir)
+            if source_path is None:
+                continue
+
+            record = {
+                "sequence": sequence,
+                "accession": "" if accession.lower() == "nan" else accession,
+                "image_path": str(source_path),
+            }
+            if sequence and sequence not in lookup["by_sequence"]:
+                lookup["by_sequence"][sequence] = record
+            if record["accession"] and record["accession"] not in lookup["by_accession"]:
+                lookup["by_accession"][record["accession"]] = record
+
+    return lookup
+
+
+def _lookup_cartoon(
+    cartoon_lookup: dict[str, dict[str, dict[str, str]]],
+    accession: str,
+    sequence: str,
+) -> dict[str, str] | None:
+    """Find a cached cartoon by accession first, then by sequence."""
+    return (
+        cartoon_lookup["by_accession"].get(str(accession))
+        or cartoon_lookup["by_sequence"].get(str(sequence))
+    )
+
+
+def _render_cartoon_image(
+    image_path: str,
+    output_dir: Path,
+    image_key: str,
+    mini: bool = False,
+    embed_images: bool = True,
+) -> str:
+    """Render a cached cartoon image if available."""
+    css_class = "mini-cartoon" if mini else "cartoon-box"
+    if not image_path:
+        return f'<div class="{css_class}"><div class="missing-cartoon">cartoon not cached</div></div>'
+
+    source_path = Path(image_path) if Path(image_path).exists() else None
+    if source_path is None:
+        return f'<div class="{css_class}"><div class="missing-cartoon">cartoon file missing</div></div>'
+
+    if embed_images:
+        image_source = _file_to_data_uri(source_path)
+    else:
+        copied_path = _copy_cartoon_for_report(
+            source_path,
+            output_dir / "html_assets" / "cartoons",
+            image_key=image_key,
+        )
+        image_source = _relative_path(copied_path, output_dir) if copied_path else None
+
+    if image_source is None:
+        return f'<div class="{css_class}"><div class="missing-cartoon">cartoon file missing</div></div>'
+
+    return (
+        f'<div class="{css_class}">'
+        f'<img src="{escape(image_source)}" alt="glycan cartoon">'
+        "</div>"
+    )
 
 
 def _make_report_path_relative(path_value: str | Path | object) -> str:
@@ -776,12 +1054,169 @@ def _make_report_path_relative(path_value: str | Path | object) -> str:
 
 
 def _prepare_matched_run_summary_for_report(frame_df: "pd.DataFrame") -> "pd.DataFrame":
-    """Hide machine-specific path prefixes before rendering the run summary table."""
+    """Keep only the report-level run summary columns for the HTML view."""
     report_df = frame_df.copy()
-    for column_name in ("run_dir", "model_dir"):
-        if column_name in report_df.columns:
-            report_df[column_name] = report_df[column_name].map(_make_report_path_relative)
-    return report_df
+    keep_columns = [
+        "pooling_strategy",
+        "query_count",
+        "corpus_count",
+        "matched_pair_count",
+        "non_self_pair_count",
+        "all_vs_all_mean",
+        "all_vs_all_median",
+    ]
+    available_columns = [column_name for column_name in keep_columns if column_name in report_df.columns]
+    return report_df.loc[:, available_columns].copy()
+
+
+def _prepare_three_way_overlap_for_report(frame_df: "pd.DataFrame") -> "pd.DataFrame":
+    """Keep only the high-level overlap counts in the HTML report."""
+    keep_columns = [
+        "query_accession",
+        "top_k",
+        "cls_only_count",
+        "mean_only_count",
+        "max_only_count",
+        "cls_mean_only_count",
+        "cls_max_only_count",
+        "mean_max_only_count",
+        "all_three_count",
+    ]
+    available_columns = [column_name for column_name in keep_columns if column_name in frame_df.columns]
+    return frame_df.loc[:, available_columns].copy()
+
+
+def _prepare_query_inspection_for_report(frame_df: "pd.DataFrame") -> "pd.DataFrame":
+    """Remove bulky sequence columns from the HTML view while keeping the scored comparison columns."""
+    report_df = frame_df.copy()
+    if "is_self_match" in report_df.columns and report_df["is_self_match"].nunique(dropna=False) == 1:
+        if bool(report_df["is_self_match"].iloc[0]) is False:
+            report_df = report_df.drop(columns=["is_self_match"])
+
+    keep_columns = [
+        "query_accession",
+        "corpus_accession",
+        "cls_similarity",
+        "cls_rank",
+        "mean_similarity",
+        "mean_rank",
+        "max_similarity",
+        "max_rank",
+        "mean_similarity_across_poolings",
+        "rank_spread",
+    ]
+    available_columns = [column_name for column_name in keep_columns if column_name in report_df.columns]
+    return report_df.loc[:, available_columns].copy()
+
+
+def _build_query_gallery_table(
+    frame_df: "pd.DataFrame",
+    cartoon_lookup: dict[str, dict[str, dict[str, str]]],
+) -> "pd.DataFrame":
+    """Attach cached cartoon paths to the selected notebook-13 inspection rows."""
+    rows = []
+    for row in frame_df.itertuples(index=False):
+        query_accession = str(getattr(row, "query_accession"))
+        query_sequence = str(getattr(row, "query_sequence"))
+        corpus_accession = str(getattr(row, "corpus_accession"))
+        corpus_sequence = str(getattr(row, "corpus_sequence"))
+
+        query_cartoon = _lookup_cartoon(cartoon_lookup, query_accession, query_sequence)
+        corpus_cartoon = _lookup_cartoon(cartoon_lookup, corpus_accession, corpus_sequence)
+        rows.append(
+            {
+                "query_accession": query_accession,
+                "query_sequence": query_sequence,
+                "query_cartoon_path": query_cartoon["image_path"] if query_cartoon else "",
+                "corpus_accession": corpus_accession,
+                "display_accession": (
+                    corpus_cartoon["accession"]
+                    if corpus_cartoon and corpus_cartoon.get("accession")
+                    else corpus_accession
+                ),
+                "corpus_cartoon_path": corpus_cartoon["image_path"] if corpus_cartoon else "",
+                "cls_similarity": float(getattr(row, "cls_similarity")),
+                "cls_rank": int(getattr(row, "cls_rank")),
+                "mean_similarity": float(getattr(row, "mean_similarity")),
+                "mean_rank": int(getattr(row, "mean_rank")),
+                "max_similarity": float(getattr(row, "max_similarity")),
+                "max_rank": int(getattr(row, "max_rank")),
+                "mean_similarity_across_poolings": float(getattr(row, "mean_similarity_across_poolings")),
+                "rank_spread": int(getattr(row, "rank_spread")),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _render_query_gallery_sections(
+    gallery_df: "pd.DataFrame",
+    output_dir: Path,
+    embed_images: bool = True,
+) -> str:
+    """Render one cartoon gallery section per query glycan."""
+    if gallery_df.empty:
+        return "<p class='subtle'>No query gallery rows were generated.</p>"
+
+    sections = []
+    for query_accession, query_df in gallery_df.groupby("query_accession", sort=False):
+        first_row = query_df.iloc[0]
+        query_cartoon_html = _render_cartoon_image(
+            str(first_row["query_cartoon_path"]),
+            output_dir=output_dir,
+            image_key=f"{query_accession}_query",
+            mini=False,
+            embed_images=embed_images,
+        )
+
+        body_rows = []
+        for row in query_df.itertuples(index=False):
+            neighbor_cartoon_html = _render_cartoon_image(
+                str(row.corpus_cartoon_path),
+                output_dir=output_dir,
+                image_key=f"{query_accession}_{row.corpus_accession}",
+                mini=True,
+                embed_images=embed_images,
+            )
+            body_rows.append(
+                "<tr>"
+                f'<td class="neighbor-cartoon-cell">{neighbor_cartoon_html}</td>'
+                f"<td>{escape(str(row.display_accession))}</td>"
+                f'<td class="numeric">{int(row.cls_rank)}</td>'
+                f'<td class="numeric">{float(row.cls_similarity):.3f}</td>'
+                f'<td class="numeric">{int(row.mean_rank)}</td>'
+                f'<td class="numeric">{float(row.mean_similarity):.3f}</td>'
+                f'<td class="numeric">{int(row.max_rank)}</td>'
+                f'<td class="numeric">{float(row.max_similarity):.3f}</td>'
+                f'<td class="numeric">{float(row.mean_similarity_across_poolings):.3f}</td>'
+                f'<td class="numeric">{int(row.rank_spread)}</td>'
+                "</tr>"
+            )
+
+        sections.append(
+            '<section class="query-gallery">'
+            '<div class="query-gallery-header">'
+            f"{query_cartoon_html}"
+            '<div class="query-gallery-copy">'
+            f"<h3>Query {escape(str(query_accession))}</h3>"
+            "<p>These rows show the same selected neighbors across the three pooling rules. The cartoons make it easier to see when rank changes coincide with visible structural differences.</p>"
+            "</div>"
+            "</div>"
+            '<div class="query-neighbor-table">'
+            '<div class="table-scroll">'
+            '<table class="report-table">'
+            "<thead><tr>"
+            "<th>Cartoon</th><th>Neighbor</th><th>CLS rank</th><th>CLS sim</th>"
+            "<th>Mean rank</th><th>Mean sim</th><th>Max rank</th><th>Max sim</th>"
+            "<th>Mean sim across poolings</th><th>Rank spread</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(body_rows)}</tbody>"
+            "</table>"
+            "</div>"
+            "</div>"
+            "</section>"
+        )
+
+    return "".join(sections)
 
 
 def render_pooling_metric_comparison_html_report(
@@ -792,6 +1227,7 @@ def render_pooling_metric_comparison_html_report(
     shared_model_dir: str,
     inspect_query_accessions: Sequence[str] | None,
     top_k_neighbors: int,
+    run_specs: Sequence[dict[str, str | Path]] | None = None,
     embed_images: bool = True,
 ) -> str:
     """Render one presentation-friendly HTML report for notebook 13."""
@@ -803,10 +1239,27 @@ def render_pooling_metric_comparison_html_report(
     query_note = ", ".join(str(value) for value in (inspect_query_accessions or [])) or "first configured queries"
     summary_df = comparison_tables["pooling_similarity_summary"]
     overlap_summary_df = comparison_tables["pooling_top_k_overlap_summary"]
-    report_model_dir = _make_report_path_relative(shared_model_dir)
     matched_run_summary_df = _prepare_matched_run_summary_for_report(
         comparison_tables["matched_pooling_run_summary"]
     )
+    three_way_overlap_df = _prepare_three_way_overlap_for_report(
+        comparison_tables["pooling_top_k_three_way_overlap"]
+    )
+    inspection_df = _prepare_query_inspection_for_report(
+        comparison_tables["pooling_query_inspection"]
+    )
+    gallery_html = "<p class='subtle'>No cached cartoons were available for the selected notebook-8 runs.</p>"
+    if run_specs is not None:
+        cartoon_lookup = build_cartoon_lookup_from_run_manifests(run_specs)
+        gallery_df = _build_query_gallery_table(
+            comparison_tables["pooling_query_inspection"],
+            cartoon_lookup=cartoon_lookup,
+        )
+        gallery_html = _render_query_gallery_sections(
+            gallery_df=gallery_df,
+            output_dir=output_path,
+            embed_images=embed_images,
+        )
     html = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -829,46 +1282,131 @@ def render_pooling_metric_comparison_html_report(
     <section class="card">
       <h2>What This Report Checks</h2>
       <p>This report compares notebook-8 outputs only after holding the model checkpoint, query set, and corpus fixed. The only intended change is the pooling rule.</p>
-      <p class="mono">Shared model_dir: {escape(report_model_dir)}</p>
+      <div class="callout">
+        <h3>How To Read The Main Metrics</h3>
+        <div class="term-grid">
+          <div class="term-card">
+            <strong>Similarity</strong>
+            <span>Cosine similarity for one query-corpus pair under one pooling rule. Larger values indicate stronger embedding agreement within that pooling setup.</span>
+          </div>
+          <div class="term-card">
+            <strong>Rank</strong>
+            <span>The position of one corpus glycan after sorting neighbors for a single query. Rank 1 is the closest non-self match.</span>
+          </div>
+          <div class="term-card">
+            <strong>Overlap count</strong>
+            <span>The number of corpus glycans that appear in both top-k neighbor lists being compared.</span>
+          </div>
+          <div class="term-card">
+            <strong>Jaccard overlap</strong>
+            <span>The shared-neighbor count divided by the size of the combined neighbor set. A value near 1 means the two lists are very similar.</span>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="card">
       <h2>Matched Run Summary</h2>
+      <p class="subtle">Each row should represent the same experiment under a different pooling rule. This table is the alignment check before interpreting any downstream difference.</p>
+      <div class="callout">
+        <h3>Column Guide</h3>
+        <ul>
+          <li><strong>pooling_strategy</strong>: which embedding pooling rule produced the row.</li>
+          <li><strong>query_count</strong> and <strong>corpus_count</strong>: the number of selected query glycans and corpus glycans included in the comparison.</li>
+          <li><strong>matched_pair_count</strong>: the total number of query-corpus pairs after aligning the three notebook-8 outputs.</li>
+          <li><strong>non_self_pair_count</strong>: the number of aligned pairs after excluding self matches when applicable.</li>
+          <li><strong>all_vs_all_mean</strong> and <strong>all_vs_all_median</strong>: whole-corpus similarity summaries from the original notebook-8 outputs for that pooling rule.</li>
+        </ul>
+      </div>
       <div class="table-scroll">{_render_dataframe_html(matched_run_summary_df)}</div>
     </section>
 
     <section class="card">
       <h2>Global Score Summary</h2>
       <p class="subtle">These rows summarize matched query-corpus pairs after excluding self matches.</p>
+      <div class="callout">
+        <h3>How To Interpret These Columns</h3>
+        <ul>
+          <li><strong>count</strong>: the number of aligned query-corpus pairs contributing to the row.</li>
+          <li><strong>mean</strong> and <strong>median</strong>: the center of the similarity distribution for that pooling rule.</li>
+          <li><strong>std_dev</strong>: how spread out the similarities are.</li>
+          <li><strong>q05</strong>, <strong>q25</strong>, <strong>q75</strong>, and <strong>q95</strong>: percentile cutoffs that show the lower tail, middle spread, and upper tail.</li>
+          <li><strong>Important</strong>: these values are best compared within this report, not treated as universal thresholds across different pooling methods or checkpoints.</li>
+        </ul>
+      </div>
       <div class="table-scroll">{_render_dataframe_html(summary_df)}</div>
     </section>
 
     <section class="card">
       <h2>Pairwise Correlations</h2>
+      <p class="subtle">This table asks whether two pooling rules score the same pairs similarly and whether they preserve the same ordering of pairs.</p>
+      <div class="callout">
+        <h3>Column Guide</h3>
+        <ul>
+          <li><strong>pearson_correlation</strong>: agreement in the raw score values. High Pearson means the two poolings move up and down together, even if one uses a different score scale.</li>
+          <li><strong>spearman_correlation</strong>: agreement in rank ordering. High Spearman means the two poolings tend to sort pairs similarly.</li>
+          <li><strong>pair_count</strong>: the number of aligned pairs used in the correlation calculation.</li>
+        </ul>
+      </div>
       <div class="table-scroll">{_render_dataframe_html(comparison_tables["pooling_pairwise_correlations"])}</div>
     </section>
 
     <section class="card plot-wrap">
       <h2>3x3 Pooling Matrix</h2>
-      <p class="subtle">Diagonal panels show each score distribution. Off-diagonal panels show whether differences are mostly shifts, scaling changes, or ranking disruptions.</p>
+      <p class="subtle">Diagonal panels show the score distribution for one pooling rule. Off-diagonal panels compare the same query-corpus pairs under two pooling rules. A tight diagonal pattern means the two poolings behave similarly; a wider cloud means they reorder pairs more substantially.</p>
       <img src="{escape(str(plot_reference or ''))}" alt="Pooling comparison matrix">
     </section>
 
     <section class="card">
       <h2>Top-k Neighbor Overlap</h2>
       <p class="subtle">Higher overlap means the pooling rules preserve more of the same local neighborhoods for each query glycan.</p>
+      <div class="callout">
+        <h3>Column Guide</h3>
+        <ul>
+          <li><strong>top_k</strong>: the neighborhood size used for the comparison.</li>
+          <li><strong>overlap_count</strong>: the average number of shared neighbors across the per-query top-k lists for that pooling pair.</li>
+          <li><strong>jaccard_overlap</strong>: the average shared-neighbor fraction after dividing by the size of the combined neighbor set.</li>
+          <li>As a rough rule, high correlation with low overlap means the scores move together globally but still swap enough neighbors to matter locally.</li>
+        </ul>
+      </div>
       <div class="table-scroll">{_render_dataframe_html(overlap_summary_df)}</div>
     </section>
 
     <section class="card">
       <h2>Three-Way Query Overlap</h2>
-      <div class="table-scroll">{_render_dataframe_html(comparison_tables["pooling_top_k_three_way_overlap"])}</div>
+      <p class="subtle">Each row breaks one query glycan's top-k neighborhood into Venn-diagram-style regions across `cls`, `mean`, and `max` pooling.</p>
+      <div class="callout">
+        <h3>Column Guide</h3>
+        <ul>
+          <li><strong>cls_only_count</strong>, <strong>mean_only_count</strong>, and <strong>max_only_count</strong>: neighbors unique to one pooling rule.</li>
+          <li><strong>cls_mean_only_count</strong>, <strong>cls_max_only_count</strong>, and <strong>mean_max_only_count</strong>: neighbors shared by exactly two poolings.</li>
+          <li><strong>all_three_count</strong>: neighbors shared by all three pooling rules.</li>
+          <li>The HTML report keeps only the count columns. The matching accession lists are still preserved in the exported CSV files.</li>
+        </ul>
+      </div>
+      <div class="table-scroll">{_render_dataframe_html(three_way_overlap_df)}</div>
     </section>
 
     <section class="card">
-      <h2>Inspection Table</h2>
-      <p class="subtle">This table is the lightweight follow-up view for specific professor-raised glycans such as G74120DW. The default notebook focus is: {escape(query_note)}.</p>
-      <div class="table-scroll">{_render_dataframe_html(comparison_tables["pooling_query_inspection"])}</div>
+      <h2>Query Cartoon Galleries</h2>
+      <p class="subtle">These panels add the visual comparison view that the score tables cannot provide on their own. Each query section shows the selected neighbors with cartoons and the three pooling-specific ranks side by side.</p>
+      <div class="gallery-grid">{gallery_html}</div>
+    </section>
+
+    <section class="card">
+      <h2>Inspection Scores</h2>
+      <p class="subtle">This compact table keeps the numerical comparison view for the configured query glycans. The default notebook focus is: {escape(query_note)}.</p>
+      <div class="callout">
+        <h3>Column Guide</h3>
+        <ul>
+          <li><strong>cls_similarity</strong>, <strong>mean_similarity</strong>, and <strong>max_similarity</strong>: the score assigned to the same query-corpus pair under each pooling rule.</li>
+          <li><strong>cls_rank</strong>, <strong>mean_rank</strong>, and <strong>max_rank</strong>: where that corpus glycan lands in each pooling-specific neighbor list.</li>
+          <li><strong>mean_similarity_across_poolings</strong>: the simple average of the three similarity values, used here to surface strong candidates that stay good overall.</li>
+          <li><strong>rank_spread</strong>: the difference between the best and worst rank across pooling rules. Large values flag pooling-sensitive neighbors.</li>
+          <li>The HTML version hides the long sequence strings to keep the table readable. The full sequences remain available in the saved CSV exports.</li>
+        </ul>
+      </div>
+      <div class="table-scroll">{_render_dataframe_html(inspection_df)}</div>
     </section>
   </main>
 </body>
@@ -943,6 +1481,7 @@ def build_pooling_metric_comparison(
         shared_model_dir=str(matched_outputs["shared_model_dir"]),
         inspect_query_accessions=inspect_query_accessions,
         top_k_neighbors=top_k_neighbors,
+        run_specs=run_specs,
         embed_images=embed_html_images,
     )
     plot_paths["html_report_path"] = html_report_path
