@@ -188,11 +188,16 @@ def _build_content_mask(encoded_batch, tokenizer) -> torch.Tensor:
 def normalize_pooling_strategy(pooling_strategy: str | None = None) -> str:
     """Return one validated pooling-strategy label."""
     normalized = str(pooling_strategy or "mean").strip().lower()
-    if normalized not in {"mean", "max"}:
+    if normalized not in {"cls", "mean", "max"}:
         raise ValueError(
-            f"Unsupported pooling_strategy {pooling_strategy!r}. Expected 'mean' or 'max'."
+            f"Unsupported pooling_strategy {pooling_strategy!r}. Expected 'cls', 'mean', or 'max'."
         )
     return normalized
+
+
+def _cls_pool_hidden_states(hidden_states: torch.Tensor) -> torch.Tensor:
+    """Return the hidden state at the first token position for each sequence."""
+    return hidden_states[:, 0, :]
 
 
 def _mean_pool_hidden_states(hidden_states: torch.Tensor, content_mask: torch.Tensor) -> torch.Tensor:
@@ -260,11 +265,14 @@ def embed_sequences(
         encoded_batch = {name: tensor.to(runtime_device) for name, tensor in encoded_batch.items()}
 
         hidden_states = encoder(**encoded_batch).last_hidden_state
-        content_mask = _build_content_mask(encoded_batch, tokenizer)
-        if normalized_pooling_strategy == "mean":
-            pooled_batch = _mean_pool_hidden_states(hidden_states, content_mask)
+        if normalized_pooling_strategy == "cls":
+            pooled_batch = _cls_pool_hidden_states(hidden_states)
         else:
-            pooled_batch = _max_pool_hidden_states(hidden_states, content_mask)
+            content_mask = _build_content_mask(encoded_batch, tokenizer)
+            if normalized_pooling_strategy == "mean":
+                pooled_batch = _mean_pool_hidden_states(hidden_states, content_mask)
+            else:
+                pooled_batch = _max_pool_hidden_states(hidden_states, content_mask)
         embedding_batches.append(pooled_batch.cpu())
 
     return torch.cat(embedding_batches, dim=0)

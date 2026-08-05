@@ -50,6 +50,26 @@ from src.similarity_scaleup import (
     validate_scaleup_similarity_inputs,
 )
 from src.similarity_model_comparison import export_public_similarity_model_comparison_html
+from src.similarity_pooling_comparison import (
+    MATCH_KEYS,
+    POOLING_ORDER,
+    SUMMARY_COLUMNS as POOLING_SUMMARY_COLUMNS,
+    build_matched_pooling_score_table,
+    build_notebook8_output_run_label,
+    build_pooling_metric_comparison,
+    build_pooling_pairwise_correlations,
+    build_pooling_query_inspection_table,
+    build_pooling_run_specs,
+    build_pooling_similarity_summary,
+    build_pooling_similarity_summary_by_query,
+    build_pooling_three_way_top_k_overlap_summary,
+    build_pooling_top_k_overlap,
+    build_pooling_top_k_overlap_summary,
+    export_public_pooling_metric_comparison_html,
+    load_matched_pooling_outputs,
+    plot_pooling_metric_matrix,
+    render_pooling_metric_comparison_html_report,
+)
 from src.similarity_variants import (
     DEFAULT_VARIANT_MODEL_SUITE,
     VARIANT_SET_ORDER,
