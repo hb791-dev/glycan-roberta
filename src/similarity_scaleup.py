@@ -117,6 +117,177 @@ def validate_scaleup_similarity_inputs(
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
 
+def load_plaintext_sequence_corpus(
+    split_path: str | Path,
+    *,
+    accession_prefix: str = "test_row",
+) -> "pd.DataFrame":
+    """Load a plain-text sequence split into a notebook-friendly dataframe.
+
+    Notebook 8 uses a held-out split file that contains only raw glycan
+    sequences, one per line. This helper trims blank lines and assigns stable
+    accession-style row identifiers so the downstream CSVs and HTML reports are
+    easier to read.
+    """
+
+    import pandas as pd
+
+    split_path = Path(split_path)
+    if not split_path.exists():
+        raise FileNotFoundError(f"Test split file not found: {split_path}")
+
+    with split_path.open("r", encoding="utf-8") as file:
+        sequences = [line.strip() for line in file if line.strip()]
+
+    test_df = pd.DataFrame(
+        {
+            "test_row_number": range(1, len(sequences) + 1),
+            "sequence": sequences,
+        }
+    )
+    test_df["accession"] = test_df["test_row_number"].map(
+        lambda row_number: f"{accession_prefix}_{row_number:05d}"
+    )
+    return test_df[["accession", "sequence", "test_row_number"]]
+
+
+def prepare_selected_query_panels(
+    selected_glycans: Sequence[dict[str, object]],
+    *,
+    run_query_accessions: Sequence[str] | None = None,
+    review_query_accessions: Sequence[str] | None = None,
+    pca_focus_accessions: str | Sequence[str] | None = None,
+    active_cloud_threshold: float,
+    similarity_thresholds: Sequence[float],
+) -> dict[str, object]:
+    """Validate and organize notebook-8 query settings in one place."""
+
+    import pandas as pd
+
+    selected_df = pd.DataFrame(selected_glycans).copy()
+    required_columns = {"accession", "sequence", "label"}
+    missing_columns = sorted(required_columns - set(selected_df.columns))
+    if missing_columns:
+        raise ValueError(
+            "Each selected glycan record must include accession, sequence, and label. "
+            f"Missing columns: {missing_columns}"
+        )
+
+    selected_df["accession"] = selected_df["accession"].fillna("").map(str).map(str.strip)
+    selected_df["sequence"] = selected_df["sequence"].fillna("").map(str).map(str.strip)
+    selected_df["label"] = selected_df["label"].fillna("").map(str).map(str.strip)
+
+    if selected_df["accession"].eq("").any():
+        raise ValueError("Every selected glycan must include a non-empty accession.")
+    if selected_df["sequence"].eq("").any():
+        raise ValueError("Every selected glycan must include a non-empty sequence.")
+
+    if selected_df["accession"].duplicated().any():
+        duplicate_accessions = (
+            selected_df.loc[selected_df["accession"].duplicated(), "accession"].tolist()
+        )
+        raise ValueError(
+            f"Selected glycan accessions must be unique. Duplicates: {duplicate_accessions}"
+        )
+
+    chosen_accessions = [str(value) for value in (run_query_accessions or [])]
+    if chosen_accessions:
+        selected_lookup_df = selected_df.set_index("accession", drop=False)
+        missing_accessions = [
+            accession for accession in chosen_accessions
+            if accession not in set(selected_lookup_df.index)
+        ]
+        if missing_accessions:
+            raise ValueError(
+                f"Unknown selected-glycan accessions in RUN_QUERY_ACCESSIONS: {missing_accessions}"
+            )
+        run_panel_df = selected_lookup_df.loc[chosen_accessions].reset_index(drop=True)
+    else:
+        run_panel_df = selected_df.reset_index(drop=True)
+
+    selected_accessions = run_panel_df["accession"].tolist()
+    review_accessions = [str(value) for value in (review_query_accessions or selected_accessions)]
+    missing_review_accessions = [
+        accession for accession in review_accessions
+        if accession not in selected_accessions
+    ]
+    if missing_review_accessions:
+        raise ValueError(
+            "Every review accession must also be included in RUN_QUERY_ACCESSIONS. "
+            f"Missing from the run panel: {missing_review_accessions}"
+        )
+
+    if float(active_cloud_threshold) not in {float(value) for value in similarity_thresholds}:
+        raise ValueError(
+            "ACTIVE_CLOUD_THRESHOLD must be one of the values listed in "
+            "SIMILARITY_THRESHOLDS."
+        )
+
+    if pca_focus_accessions is None:
+        effective_focus_accessions = [selected_accessions[0]]
+    elif isinstance(pca_focus_accessions, str):
+        effective_focus_accessions = [pca_focus_accessions]
+    else:
+        effective_focus_accessions = [str(value) for value in pca_focus_accessions]
+
+    normalized_focus_accessions: list[str] = []
+    seen_accessions: set[str] = set()
+    for accession in effective_focus_accessions:
+        if accession not in seen_accessions:
+            normalized_focus_accessions.append(accession)
+            seen_accessions.add(accession)
+
+    invalid_focus_accessions = [
+        accession for accession in normalized_focus_accessions
+        if accession not in selected_accessions
+    ]
+    if invalid_focus_accessions:
+        raise ValueError(
+            "PCA_FOCUS_ACCESSIONS must only include accessions from the selected run panel. "
+            f"Invalid values: {invalid_focus_accessions}"
+        )
+
+    selected_lookup = run_panel_df.set_index("accession").to_dict(orient="index")
+    return {
+        "selected_glycans_df": run_panel_df,
+        "selected_accessions": selected_accessions,
+        "review_accessions": review_accessions,
+        "effective_pca_focus_accessions": normalized_focus_accessions,
+        "selected_glycan_lookup": selected_lookup,
+    }
+
+
+def build_ranked_neighbor_preview(
+    results_bundle: dict[str, object],
+    accession: str,
+    neighbor_limit: int,
+):
+    """Return the top non-self ranked neighbors for one query accession."""
+
+    query_results_df = results_bundle["specific_vs_all_results_df"]
+    ranked_neighbors_df = query_results_df.loc[
+        (query_results_df["query_accession"] == accession)
+        & (~query_results_df["is_self_match"])
+    ][["rank", "corpus_accession", "cosine_similarity", "corpus_sequence"]].copy()
+    return ranked_neighbors_df.head(int(neighbor_limit)).reset_index(drop=True)
+
+
+def build_active_cloud_preview(
+    results_bundle: dict[str, object],
+    accession: str,
+    threshold: float,
+    cloud_limit: int,
+):
+    """Return one threshold-based cloud preview table for one query accession."""
+
+    threshold_cloud_df = results_bundle["threshold_cloud_df"]
+    cloud_df = threshold_cloud_df.loc[
+        (threshold_cloud_df["query_accession"] == accession)
+        & (threshold_cloud_df["threshold"] == float(threshold))
+    ][["cloud_rank", "corpus_accession", "cosine_similarity", "corpus_sequence"]].copy()
+    return cloud_df.head(int(cloud_limit)).reset_index(drop=True)
+
+
 # ---------------------------------------------------------------------------
 # Embedding lookup helpers
 # ---------------------------------------------------------------------------

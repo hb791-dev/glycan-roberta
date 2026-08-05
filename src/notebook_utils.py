@@ -7,8 +7,20 @@ Examples include overwrite checks, shared path validation, and seed handling.
 
 from __future__ import annotations
 
+import json
 import random
 from pathlib import Path
+
+
+SUPPORTED_TOKENIZER_FAMILIES = (
+    "byte_bpe",
+    "glyberta",
+    "manual",
+    "hybrid_char_bpe",
+    "linkage_block",
+    "donor_bound",
+    "semi_atomic",
+)
 
 
 def require_existing_path(path: str | Path, description: str) -> Path:
@@ -54,3 +66,37 @@ def resolve_random_seed(random_seed: int | None) -> int:
     if random_seed is None:
         return random.randrange(2**32)
     return int(random_seed)
+
+
+def validate_tokenizer_family(
+    tokenizer_family: str,
+    *,
+    supported_families: tuple[str, ...] = SUPPORTED_TOKENIZER_FAMILIES,
+) -> str:
+    """Return a normalized tokenizer family or raise a clear error."""
+
+    normalized_family = str(tokenizer_family).strip()
+    if normalized_family not in supported_families:
+        valid_display = ", ".join(supported_families)
+        raise ValueError(
+            f"Unsupported tokenizer family: {normalized_family}. "
+            f"Choose from: {valid_display}"
+        )
+    return normalized_family
+
+
+def stringify_path_values(record: dict[str, object]) -> dict[str, object]:
+    """Convert any Path values to strings before JSON serialization."""
+
+    return {
+        key: str(value) if isinstance(value, Path) else value
+        for key, value in record.items()
+    }
+
+
+def write_json(path: str | Path, payload: dict[str, object]) -> Path:
+    """Write one JSON file with consistent formatting across notebooks."""
+
+    path = Path(path)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
