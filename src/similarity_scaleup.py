@@ -1760,8 +1760,9 @@ def export_public_scaleup_html(
     - start from either the main index page alone or the full report set
     - keep copied local assets working by preserving local filenames/paths
     - remove local HTML links when index-only mode omits the linked report pages
-    - discover any extra local assets referenced from those HTML pages
-    - scan copied text files for obvious personal paths or email addresses
+    - discover any extra local assets referenced from the landing page
+    - scan the landing page and any discovered asset files for obvious personal
+      paths or email addresses
 
     The result is a small static-report folder that is much safer to commit to
     GitHub than the full notebook output tree.
@@ -1781,6 +1782,10 @@ def export_public_scaleup_html(
     html_dir = Path(source_saved_paths["html_dir"]).resolve()
     export_path = Path(export_dir)
     export_path.mkdir(parents=True, exist_ok=True)
+    query_html_relative_paths = {
+        Path(path).resolve().relative_to(html_dir).as_posix()
+        for path in source_saved_paths.get("query_html_paths", {}).values()
+    }
 
     initial_source_paths = [Path(source_saved_paths["index_html_path"]).resolve()]
     if export_mode == "full_report_set":
@@ -1830,7 +1835,15 @@ def export_public_scaleup_html(
             }
         )
 
+        is_known_query_html = relative_key in query_html_relative_paths
         if source_path.suffix.lower() not in {".html", ".htm", ".css", ".js", ".txt"}:
+            continue
+
+        if export_mode == "full_report_set" and is_known_query_html:
+            # The accession-specific HTML pages are already fully rendered
+            # notebook outputs with data-URI images and only a simple back-link
+            # to index.html. Re-reading and regex-scanning each multi-megabyte
+            # page adds a lot of Drive I/O without discovering anything new.
             continue
 
         text = source_path.read_text(encoding="utf-8")
