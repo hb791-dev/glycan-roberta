@@ -47,6 +47,23 @@ If your real folder is different, for example `MyDrive/GlycanProject/`, update
 `PROJECT_ROOT` in the notebook before running it. The cleaned notebooks do not
 assume that the literal folder name must be `ProjectRoot`.
 
+## Notebook Conventions
+
+The cleaned notebooks in this repository follow a shared structure so they are
+easier to read, rerun, and maintain.
+
+- each notebook keeps a clearly labeled user settings cell near the top for
+  values you may need to edit before running, such as `PROJECT_ROOT`, input
+  filenames, run labels, tokenizer families, or overwrite flags
+- each code cell is preceded by professional markdown that explains what the
+  cell does, why it is being run, what output to expect, and how to interpret
+  that output
+- repeated setup, path handling, validation, overwrite checks, and other
+  runtime logic are pushed into shared helpers under `src/` rather than being
+  re-implemented inline in every notebook
+- notebook code cells still include descriptive inline comments so the workflow
+  stays beginner-friendly even when logic has been moved into helpers
+
 ## Repository Layout
 
 ```text
@@ -75,15 +92,22 @@ glycan-roberta/
 │   ├── 09_classification_dataset_prep.ipynb
 │   ├── 10_classification_finetuning.ipynb
 │   ├── 11_classification_evaluation.ipynb
-│   └── 12_glyberta_similarity_model_comparison.ipynb
+│   ├── 11b_classification_embedding_umap.ipynb
+│   ├── 12_glyberta_similarity_model_comparison.ipynb
+│   └── 13_pooling_metric_comparison.ipynb
 ├── public_reports/
 ├── src/
 │   ├── exploration.py
 │   ├── data_utils.py
+│   ├── dataset_preprocessing.py
 │   ├── notebook_setup.py
 │   ├── notebook_utils.py
+│   ├── pretraining.py
+│   ├── rarity_analysis.py
+│   ├── run_index.py
 │   ├── tokenizer_notebook_utils.py
 │   ├── tokenizer_utils.py
+│   ├── classification_embedding_umap.py
 │   ├── classification_prep.py
 │   ├── classification_evaluation.py
 │   ├── classification_training.py
@@ -91,6 +115,7 @@ glycan-roberta/
 │   ├── similarity.py
 │   ├── similarity_core.py
 │   ├── similarity_model_comparison.py
+│   ├── similarity_pooling_comparison.py
 │   ├── similarity_variants.py
 │   ├── similarity_scaleup.py
 │   ├── test_evaluation.py
@@ -310,7 +335,7 @@ Main outputs:
 - Splits glycans into smaller reusable pieces such as residue identity, donor information, and acceptor information.
 - This is the most modular structured tokenizer in the current set.
 
-## Helper Scripts Used By Notebooks `00` To `02g`
+## Key Helper Scripts
 
 ### `src/notebook_setup.py`
 
@@ -354,6 +379,60 @@ Main outputs:
 - defines the GlyBERTa-style compact split rule
 - trains BPE and WordLevel tokenizer variants
 - supports vocabulary construction for the structured tokenizers
+
+### `src/dataset_preprocessing.py`
+
+- loads saved tokenizer artifacts together with train, validation, and test
+  split files
+- tokenizes the three splits with one consistent preprocessing configuration
+- saves the PyTorch dataset artifacts used by notebook `03`
+- centralizes preview-table and summary-file creation for tokenized datasets
+
+### `src/pretraining.py`
+
+- builds standard pretraining paths, configs, and training arguments
+- supports fresh runs, checkpoint resumes, and continuation runs
+- saves experiment metadata and keeps notebook `04` focused on the run setup
+  rather than Trainer boilerplate
+
+### `src/run_index.py`
+
+- standardizes reading and writing of the Drive-side run registry
+- keeps registry updates consistent across training and evaluation notebooks
+- helps prevent ad hoc run-tracking logic from drifting between notebooks
+
+### `src/training_diagnostics.py`
+
+- loads Trainer history from saved checkpoints
+- reshapes the loss history into notebook-5-friendly tables
+- saves the validation summary used for continuation decisions
+
+### `src/test_evaluation.py`
+
+- runs the held-out MLM test evaluation used by notebook `06`
+- saves summary tables, per-class metrics, ROC and PR outputs, and qualitative
+  probe artifacts
+- centralizes tokenizer-family-specific evaluation settings
+
+### `src/rarity_analysis.py`
+
+- aggregates notebook-6 outputs by token support
+- summarizes rare-token versus common-token performance patterns
+- saves the rarity tables and plots used by notebook `06b`
+
+### `src/classification_embedding_umap.py`
+
+- builds pooled sequence embeddings for the classification dataset
+- projects them with UMAP and saves the coordinate tables and plots used by
+  notebook `11b`
+- supports multiple color-label views over the same embedding space
+
+### `src/similarity_pooling_comparison.py`
+
+- compares notebook-8 outputs across `cls`, `mean`, and `max` pooling rules
+- creates aligned tables, overlap summaries, and report assets for notebook
+  `13`
+- keeps pooling-comparison logic separate from the larger notebook-8 workflow
 
 ## Optional Diagnostic Outputs
 
@@ -685,6 +764,31 @@ Notes:
   the earlier MLM evaluation notebook: the saved curves are easier to interpret
   visually
 
+### `11b_classification_embedding_umap.ipynb`
+
+Purpose:
+- project one saved model state into a 2D UMAP view for qualitative
+  classification-side embedding inspection
+- support `pretrained_mlm`, `classification_mlm_init`, and
+  `classification_random_init` model states for the same tokenizer family
+- compare alternate sequence-pooling rules such as `mean` and `max`
+- color the same embedding space by subtype, broad glycan class, branching, or
+  `N` versus `O` views
+
+Main outputs:
+- pooled embedding coordinate tables
+- UMAP projection tables
+- color-view-specific PNG plots
+- notebook configuration summary files
+
+Notes:
+- the reusable projection and plotting logic lives in
+  `src/classification_embedding_umap.py`
+- this notebook is intended for qualitative interpretation rather than final
+  benchmark scoring
+- it works from the prepared classification dataset plus one selected saved
+  model state
+
 ### `12_glyberta_similarity_model_comparison.ipynb`
 
 Purpose:
@@ -745,6 +849,29 @@ Notes:
   must be kept together
 - missing labels in cloud-label summaries are counted separately instead of
   being treated as negative examples
+
+### `13_pooling_metric_comparison.ipynb`
+
+Purpose:
+- compare notebook-8 similarity outputs across `cls`, `mean`, and `max`
+  pooling for one fixed checkpoint
+- isolate pooling choice as the only intended difference between compared runs
+- summarize how pooling affects score distributions, nearest neighbors, and
+  threshold-cloud behavior
+
+Main outputs:
+- matched pooling summary tables
+- merged comparison CSV outputs
+- top-neighbor overlap summaries
+- pooling comparison plot matrices
+- a self-contained HTML report and optional clean public-export folder
+
+Notes:
+- the reusable comparison logic lives in
+  `src/similarity_pooling_comparison.py`
+- the three notebook-8 input folders should differ only by pooling rule if you
+  want a controlled comparison
+- this notebook is analysis-only and does not recompute embeddings itself
 
 ## Public HTML Sharing Workflow
 
@@ -810,13 +937,12 @@ The default notebook configuration currently shown in the training workflow is:
 Training diagnostics and test outputs are written with experiment-specific
 names so runs can be compared later without overwriting older results.
 
-## Architectures Run So Far
+## Architecture Naming Convention
 
-Based on the Drive-side run registry in
-`<PROJECT_ROOT>/registry/run_index.csv`, this project has already been used to
-train more than one model architecture.
+Experiment names use a compact architecture label so the core model settings
+are visible directly in the checkpoint and results folder names.
 
-Recorded architecture families:
+Examples:
 
 - `L4_H384_A6`:
   4 layers, hidden size 384, 6 attention heads, intermediate size 1536
@@ -825,30 +951,9 @@ Recorded architecture families:
 - `L8_H512_A8`:
   8 layers, hidden size 512, 8 attention heads, intermediate size 2048
 
-Architectures observed by tokenizer family:
-
-- `manual`:
-  runs recorded for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
-- `hybrid_char_bpe`:
-  runs recorded for `L4_H384_A6`, `L6_H512_A8`, and `L8_H512_A8`
-- `byte_bpe`:
-  runs recorded for `L6_H512_A8`
-- `glyberta`:
-  no runs recorded in the current registry yet
-
-Run modes seen in the registry:
-
-- fresh training runs
-- continuation runs from `best_model`
-
-Notes:
-
-- the Drive run index also contains test-only rows where the architecture
-  fields are not fully populated, so the architecture summary above is based on
-  rows with recorded model dimensions
-- at the time this README was updated, the registry shows completed runs for
-  the original three tokenizer families and at least one in-progress
-  historical run in the `L4_H384_A6` family
+This naming pattern is used alongside other run fields such as MLM probability,
+learning rate, epochs, and tokenizer setting label so multiple related runs can
+be compared without opening the metadata file first.
 
 ## Evaluation Workflow
 
@@ -869,6 +974,13 @@ The current evaluation workflow separates:
   - tokenizer-specific ROC and precision-recall plots
   - qualitative-probe examples
   - support for all seven tokenizer families
+- notebook 6b:
+  - rarity-oriented follow-up analysis on notebook-6 class outputs
+  - support-bucket summaries for interpreting macro versus weighted metrics
+- notebook 11b:
+  - qualitative UMAP inspection for saved classification-side embedding states
+- notebook 13:
+  - pooling-only comparison for notebook-8 similarity runs
 
 ## Reproducibility Notes
 
@@ -893,7 +1005,7 @@ actually using.
 
 This rebuild currently includes:
 
-- the full notebook pipeline through notebooks `00` to `12`
+- the full notebook pipeline through notebooks `00` to `13`
 - tokenizer generation notebooks for all seven tokenizer strategies
 - dataset preprocessing support for all seven tokenizer families
 - pretraining notebook support for all seven tokenizer families
@@ -901,10 +1013,12 @@ This rebuild currently includes:
 - test-set evaluation support for all seven tokenizer families, including
   tokenizer-specific ROC/PR token sets and qualitative probes for the three
   new compact tokenizers
+- classification-side UMAP exploration for saved embedding states
+- pooling-only comparison support for notebook-8 similarity outputs
 
 ## Notes
 
-This repository is a work-in-progress
+This repository is still a work in progress.
 
 Earlier iterations of this project have been preserved separately as a legacy record while
 this version was reorganized to make:
