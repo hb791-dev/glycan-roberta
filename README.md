@@ -160,6 +160,45 @@ MyDrive/<PROJECT_ROOT>/
 └── public_reports/
 ```
 
+## Current Audited Run Snapshot
+
+This section reflects the Google Drive audit as of `2026-08-10`.
+Because Drive artifacts can change over time, treat this as a dated snapshot
+rather than a permanent truth table.
+
+- The current cleaned cross-check file is `registry_cleaned_run_index.csv`.
+- The audit decision for downstream MLM follow-up currently uses
+  `weighted_f1` as the primary model-selection metric.
+- As of this snapshot, `19` pretraining runs have both notebook `05`
+  validation outputs and notebook `06` test-evaluation outputs saved in Drive.
+
+### Weighted-F1 Downstream Picks
+
+Use these runs as the default MLM checkpoints for downstream similarity and
+classification work unless a notebook-specific comparison explicitly says
+otherwise.
+
+| tokenizer_family | selected run for downstream work | status snapshot |
+| --- | --- | --- |
+| `byte_bpe` | `mlm15_L6_H512_A8_lr00001_ep100_setv300_m2` | downstream outputs not yet present |
+| `donor_bound` | `mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only` | downstream outputs not yet present |
+| `glyberta` | `mlm15_L8_H512_A8_lr00001_ep100_setv1_train_only` | downstream outputs not yet present |
+| `hybrid_char_bpe` | `mlm15_L6_H512_A8_lr00001_ep100_setv70_m2` | similarity, similarity-scaleup, classification fine-tuning, and classification evaluation all present |
+| `linkage_block` | `mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only` | similarity present; similarity-scaleup and classification outputs still missing |
+| `manual` | `mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only_v2` | downstream outputs not yet present |
+| `semi_atomic` | `mlm15_L8_H512_A8_lr00001_ep100_setv1_train_only` | downstream outputs not yet present |
+
+Notes:
+- `hybrid_char_bpe` is the main case where `weighted_f1` changes the preferred
+  downstream checkpoint compared with a sequence-top-1 ranking. Under
+  `weighted_f1`, the selected run is
+  `mlm15_L6_H512_A8_lr00001_ep100_setv70_m2`.
+- The legacy manual folder
+  `checkpoints/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only`
+  remains in Drive because downstream work was performed against it, but the
+  canonical renamed run for current selection is
+  `mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only_v2`.
+
 ## Notebook Workflow
 
 ### `00_data_exploration.ipynb`
