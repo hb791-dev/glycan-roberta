@@ -8,8 +8,9 @@ The downstream task described by the professor is multi-label classification:
 - labels come from the PyGly ``classification.tsv`` export
 - only ``Source == GlycoMotif`` and ``Level == GlycanSubtype`` rows are used
 - one glycan accession may carry multiple subtype labels
+- accessions with no surviving subtype labels are still kept as all-zero targets
 
-The helpers below build a clean labeled dataframe, attach the existing
+The helpers below build a clean classification dataframe, attach the existing
 train/validation/test split assignment by exact sequence match, summarize label
 coverage, and save the resulting tables for later fine-tuning notebooks.
 """
@@ -49,6 +50,26 @@ def _clean_string_series(series: "pd.Series") -> "pd.Series":
 def _serialize_labels(label_values: list[str]) -> str:
     """Return a JSON string so saved CSV rows keep label order and punctuation."""
     return json.dumps(label_values, ensure_ascii=True)
+
+
+def build_classification_prep_output_paths(output_dir: str | Path) -> dict[str, Path]:
+    """Return the standard output file paths for notebook 09 artifacts."""
+
+    output_dir = Path(output_dir)
+    return {
+        "labeled_glycans_path": output_dir / "labeled_glycans.csv",
+        "labeled_glycans_with_split_path": output_dir / "labeled_glycans_with_split.csv",
+        "prepared_classification_rows_path": output_dir / "prepared_classification_rows.csv",
+        "train_classification_path": output_dir / "train_classification.csv",
+        "val_classification_path": output_dir / "val_classification.csv",
+        "test_classification_path": output_dir / "test_classification.csv",
+        "label_vocabulary_path": output_dir / "label_vocabulary.csv",
+        "dataset_summary_path": output_dir / "dataset_summary.csv",
+        "split_summary_path": output_dir / "split_summary.csv",
+        "label_coverage_summary_path": output_dir / "label_coverage_summary.csv",
+        "missing_train_labels_path": output_dir / "missing_train_labels.csv",
+        "classification_prep_summary_path": output_dir / "classification_prep_summary.json",
+    }
 
 
 def load_accession_reference_corpus(accession_reference_path: str | Path) -> "pd.DataFrame":
@@ -211,32 +232,33 @@ def load_split_sequence_lookup(
 
 
 def assign_splits_by_sequence(
-    labeled_df: "pd.DataFrame",
+    classification_df: "pd.DataFrame",
     split_lookup: "Mapping[str, str]",
 ) -> "pd.DataFrame":
     """Attach train/validation/test split labels by exact sequence match."""
-    _require_columns(labeled_df, [SEQUENCE_COLUMN], "labeled_df")
+    _require_columns(classification_df, [SEQUENCE_COLUMN], "classification_df")
 
-    split_df = labeled_df.copy()
+    split_df = classification_df.copy()
     split_df[SPLIT_COLUMN] = split_df[SEQUENCE_COLUMN].map(split_lookup).fillna("")
     split_df["matched_existing_split"] = split_df[SPLIT_COLUMN].ne("")
     return split_df
 
 
 def build_label_vocabulary(
-    labeled_with_split_df: "pd.DataFrame",
+    prepared_with_split_df: "pd.DataFrame",
     training_split_name: str = "train",
 ) -> "pd.DataFrame":
     """Create a stable label vocabulary plus support counts across splits.
 
-    The vocabulary is derived from every labeled glycan in the prepared dataset,
-    while split-specific support columns make it easy to spot labels that never
-    appear in training and therefore cannot be learned by a classifier.
+    The vocabulary is derived from every observed subtype label in the prepared
+    dataset, while split-specific support columns make it easy to spot labels
+    that never appear in training and therefore cannot be learned by a
+    classifier.
     """
     _require_columns(
-        labeled_with_split_df,
+        prepared_with_split_df,
         [LABEL_LIST_COLUMN, SPLIT_COLUMN, LABEL_COUNT_COLUMN],
-        "labeled_with_split_df",
+        "prepared_with_split_df",
     )
 
     total_counter: Counter[str] = Counter()
@@ -246,7 +268,7 @@ def build_label_vocabulary(
         "test": Counter(),
     }
 
-    for row in labeled_with_split_df.itertuples(index=False):
+    for row in prepared_with_split_df.itertuples(index=False):
         label_values = list(getattr(row, LABEL_LIST_COLUMN))
         split_name = str(getattr(row, SPLIT_COLUMN))
         total_counter.update(label_values)
@@ -280,7 +302,7 @@ def build_label_vocabulary(
 
 def summarize_classification_dataset(
     joined_df: "pd.DataFrame",
-    labeled_with_split_df: "pd.DataFrame",
+    prepared_with_split_df: "pd.DataFrame",
     label_vocabulary_df: "pd.DataFrame",
 ) -> dict[str, object]:
     """Build compact summary tables for notebook display and saved reports."""
@@ -290,9 +312,9 @@ def summarize_classification_dataset(
         "joined_df",
     )
     _require_columns(
-        labeled_with_split_df,
+        prepared_with_split_df,
         [ACCESSION_COLUMN, SEQUENCE_COLUMN, LABEL_COUNT_COLUMN, SPLIT_COLUMN, "matched_existing_split"],
-        "labeled_with_split_df",
+        "prepared_with_split_df",
     )
     _require_columns(
         label_vocabulary_df,
@@ -302,28 +324,28 @@ def summarize_classification_dataset(
 
     dataset_summary_rows = [
         {
-            "metric": "total_accession_rows_before_label_filter",
+            "metric": "total_accession_rows_in_reference_corpus",
             "value": int(len(joined_df)),
         },
         {
-            "metric": "total_labeled_accession_rows_after_label_filter",
-            "value": int(len(labeled_with_split_df)),
+            "metric": "total_rows_in_prepared_classification_table",
+            "value": int(len(prepared_with_split_df)),
         },
         {
-            "metric": "rows_with_at_least_one_label",
-            "value": int((labeled_with_split_df[LABEL_COUNT_COLUMN] > 0).sum()),
+            "metric": "rows_with_at_least_one_subtype_label",
+            "value": int((prepared_with_split_df[LABEL_COUNT_COLUMN] > 0).sum()),
         },
         {
-            "metric": "rows_without_glycomotif_subtype_labels",
+            "metric": "rows_with_no_glycomotif_subtype_labels",
             "value": int((joined_df["has_labels"] == False).sum()),
         },
         {
             "metric": "rows_matched_to_existing_split",
-            "value": int(labeled_with_split_df["matched_existing_split"].sum()),
+            "value": int(prepared_with_split_df["matched_existing_split"].sum()),
         },
         {
             "metric": "rows_not_matched_to_existing_split",
-            "value": int((~labeled_with_split_df["matched_existing_split"]).sum()),
+            "value": int((~prepared_with_split_df["matched_existing_split"]).sum()),
         },
         {
             "metric": "unique_subtype_labels",
@@ -337,7 +359,7 @@ def summarize_classification_dataset(
     dataset_summary_df = pd.DataFrame(dataset_summary_rows)
 
     split_summary_df = (
-        labeled_with_split_df.groupby(SPLIT_COLUMN, dropna=False, sort=False)
+        prepared_with_split_df.groupby(SPLIT_COLUMN, dropna=False, sort=False)
         .agg(
             num_rows=(ACCESSION_COLUMN, "count"),
             num_labeled_rows=(LABEL_COUNT_COLUMN, lambda values: int((values > 0).sum())),
@@ -389,6 +411,7 @@ def summarize_classification_dataset(
 
 def save_classification_prep_outputs(
     labeled_df: "pd.DataFrame",
+    prepared_with_split_df: "pd.DataFrame",
     labeled_with_split_df: "pd.DataFrame",
     label_vocabulary_df: "pd.DataFrame",
     dataset_summary_df: "pd.DataFrame",
@@ -397,7 +420,7 @@ def save_classification_prep_outputs(
     missing_train_label_df: "pd.DataFrame",
     summary_json: dict[str, object],
     output_dir: str | Path,
-) -> dict[str, str]:
+) -> dict[str, Path]:
     """Write the derived CSV and JSON outputs used by notebook 09 and later steps."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -405,37 +428,31 @@ def save_classification_prep_outputs(
     labeled_output_df = labeled_df.copy()
     labeled_output_df["labels_json"] = labeled_output_df[LABEL_LIST_COLUMN].map(_serialize_labels)
 
+    prepared_with_split_output_df = prepared_with_split_df.copy()
+    prepared_with_split_output_df["labels_json"] = prepared_with_split_output_df[LABEL_LIST_COLUMN].map(
+        _serialize_labels
+    )
+
     labeled_with_split_output_df = labeled_with_split_df.copy()
     labeled_with_split_output_df["labels_json"] = labeled_with_split_output_df[LABEL_LIST_COLUMN].map(
         _serialize_labels
     )
 
-    train_output_df = labeled_with_split_output_df.loc[
-        labeled_with_split_output_df[SPLIT_COLUMN] == "train"
+    train_output_df = prepared_with_split_output_df.loc[
+        prepared_with_split_output_df[SPLIT_COLUMN] == "train"
     ].copy()
-    val_output_df = labeled_with_split_output_df.loc[
-        labeled_with_split_output_df[SPLIT_COLUMN] == "val"
+    val_output_df = prepared_with_split_output_df.loc[
+        prepared_with_split_output_df[SPLIT_COLUMN] == "val"
     ].copy()
-    test_output_df = labeled_with_split_output_df.loc[
-        labeled_with_split_output_df[SPLIT_COLUMN] == "test"
+    test_output_df = prepared_with_split_output_df.loc[
+        prepared_with_split_output_df[SPLIT_COLUMN] == "test"
     ].copy()
 
-    output_paths = {
-        "labeled_glycans_path": str(output_dir / "labeled_glycans.csv"),
-        "labeled_glycans_with_split_path": str(output_dir / "labeled_glycans_with_split.csv"),
-        "train_classification_path": str(output_dir / "train_classification.csv"),
-        "val_classification_path": str(output_dir / "val_classification.csv"),
-        "test_classification_path": str(output_dir / "test_classification.csv"),
-        "label_vocabulary_path": str(output_dir / "label_vocabulary.csv"),
-        "dataset_summary_path": str(output_dir / "dataset_summary.csv"),
-        "split_summary_path": str(output_dir / "split_summary.csv"),
-        "label_coverage_summary_path": str(output_dir / "label_coverage_summary.csv"),
-        "missing_train_labels_path": str(output_dir / "missing_train_labels.csv"),
-        "classification_prep_summary_path": str(output_dir / "classification_prep_summary.json"),
-    }
+    output_paths = build_classification_prep_output_paths(output_dir)
 
     labeled_output_df.to_csv(output_paths["labeled_glycans_path"], index=False)
     labeled_with_split_output_df.to_csv(output_paths["labeled_glycans_with_split_path"], index=False)
+    prepared_with_split_output_df.to_csv(output_paths["prepared_classification_rows_path"], index=False)
     train_output_df.to_csv(output_paths["train_classification_path"], index=False)
     val_output_df.to_csv(output_paths["val_classification_path"], index=False)
     test_output_df.to_csv(output_paths["test_classification_path"], index=False)
@@ -444,7 +461,7 @@ def save_classification_prep_outputs(
     split_summary_df.to_csv(output_paths["split_summary_path"], index=False)
     label_coverage_summary_df.to_csv(output_paths["label_coverage_summary_path"], index=False)
     missing_train_label_df.to_csv(output_paths["missing_train_labels_path"], index=False)
-    Path(output_paths["classification_prep_summary_path"]).write_text(
+    output_paths["classification_prep_summary_path"].write_text(
         json.dumps(summary_json, indent=2),
         encoding="utf-8",
     )
@@ -470,16 +487,19 @@ def run_classification_prep_pipeline(
     filtered_classification_df = load_filtered_classification_table(classification_tsv_path)
     accession_label_df = aggregate_subtype_labels_by_accession(filtered_classification_df)
 
-    joined_df = join_sequences_with_labels(accession_df, accession_label_df)
-    labeled_df = joined_df.loc[joined_df["has_labels"]].copy().reset_index(drop=True)
-
     split_lookup = load_split_sequence_lookup(train_path, val_path, test_path)
-    labeled_with_split_df = assign_splits_by_sequence(labeled_df, split_lookup)
+    joined_df = join_sequences_with_labels(accession_df, accession_label_df)
+    prepared_with_split_df = assign_splits_by_sequence(joined_df, split_lookup)
+    labeled_df = joined_df.loc[joined_df["has_labels"]].copy().reset_index(drop=True)
+    labeled_with_split_df = prepared_with_split_df.loc[
+        prepared_with_split_df["has_labels"]
+    ].copy().reset_index(drop=True)
 
-    label_vocabulary_df = build_label_vocabulary(labeled_with_split_df)
-    summary_bundle = summarize_classification_dataset(joined_df, labeled_with_split_df, label_vocabulary_df)
+    label_vocabulary_df = build_label_vocabulary(prepared_with_split_df)
+    summary_bundle = summarize_classification_dataset(joined_df, prepared_with_split_df, label_vocabulary_df)
     output_paths = save_classification_prep_outputs(
         labeled_df=labeled_df,
+        prepared_with_split_df=prepared_with_split_df,
         labeled_with_split_df=labeled_with_split_df,
         label_vocabulary_df=label_vocabulary_df,
         dataset_summary_df=summary_bundle["dataset_summary_df"],
@@ -495,6 +515,7 @@ def run_classification_prep_pipeline(
         "filtered_classification_df": filtered_classification_df,
         "accession_label_df": accession_label_df,
         "labeled_df": labeled_df,
+        "prepared_with_split_df": prepared_with_split_df,
         "labeled_with_split_df": labeled_with_split_df,
         "label_vocabulary_df": label_vocabulary_df,
         "dataset_summary_df": summary_bundle["dataset_summary_df"],

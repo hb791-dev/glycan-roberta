@@ -1,17 +1,13 @@
 """Helpers for multi-label glycan classification fine-tuning.
 
-This module is the notebook-10 counterpart to ``src/classification_prep.py``.
-Its job is to keep the repetitive training setup out of the notebook so the
-notebook can stay focused on:
+This module supports notebook 10 by moving reusable run validation,
+tokenization, output-path handling, and validation-review logic out of the
+notebook body. The notebook can stay focused on:
 
-- choosing one pretrained checkpoint
-- choosing clear Drive output folders
-- training one sequence classifier at a time
+- choosing one classifier run mode and one starting checkpoint
+- loading the prepared notebook-09 classification tables
+- training one multi-label classifier at a time
 - reviewing validation behavior before touching the test set
-
-The project is still comparing multiple tokenizer families, so these helpers
-also make the output-folder naming explicit. That way classifier runs derived
-from different pretrained checkpoints do not get mixed together in Drive.
 """
 
 from __future__ import annotations
@@ -26,11 +22,33 @@ import pandas as pd
 import torch
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from torch.utils.data import Dataset
-from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer, TrainingArguments
+
+from src.notebook_utils import (
+    require_existing_path,
+    resolve_random_seed,
+    validate_output_paths,
+    validate_tokenizer_family,
+)
+from src.training_diagnostics import (
+    load_trainer_history,
+    merge_loss_history,
+    recommend_continuation,
+    split_train_eval_history,
+    summarize_best_epoch,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+
+NOTEBOOK_PATH = "notebooks/10_classification_finetuning.ipynb"
+VALID_CLASSIFIER_RUN_MODES = {
+    "fresh_mlm_checkpoint",
+    "fresh_random_init",
+    "resume_checkpoint",
+    "continue_best_model",
+}
 
 ACCESSION_COLUMN = "glycan_id"
 SEQUENCE_COLUMN = "sequence"
@@ -73,6 +91,371 @@ def _load_json_label_list(value) -> list[str]:
 def _serialize_json(value: object) -> str:
     """Return a deterministic ASCII JSON string for CSV export."""
     return json.dumps(value, ensure_ascii=True, sort_keys=isinstance(value, dict))
+
+
+def _save_json(payload: dict[str, object], output_path: str | Path) -> Path:
+    """Write one formatted JSON file and return its path."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return output_path
+
+
+def _normalize_classifier_run_mode(run_mode: str) -> str:
+    """Return one validated classifier run mode."""
+    normalized_run_mode = str(run_mode).strip().lower()
+    if normalized_run_mode not in VALID_CLASSIFIER_RUN_MODES:
+        supported_modes = ", ".join(sorted(VALID_CLASSIFIER_RUN_MODES))
+        raise ValueError(f"RUN_MODE must be one of: {supported_modes}")
+    return normalized_run_mode
+
+
+def _resolve_classifier_schedule(
+    run_mode: str,
+    initial_num_train_epochs: int,
+    continuation_num_train_epochs: int,
+    base_learning_rate: float,
+    continuation_learning_rate: float,
+) -> dict[str, int | float]:
+    """Convert run-mode settings into effective epochs and learning rate."""
+    if run_mode in {"fresh_mlm_checkpoint", "fresh_random_init"}:
+        return {
+            "num_train_epochs": int(initial_num_train_epochs),
+            "learning_rate": float(base_learning_rate),
+        }
+
+    if run_mode == "resume_checkpoint":
+        return {
+            "num_train_epochs": int(initial_num_train_epochs) + int(continuation_num_train_epochs),
+            "learning_rate": float(base_learning_rate),
+        }
+
+    if run_mode == "continue_best_model":
+        return {
+            "num_train_epochs": int(continuation_num_train_epochs),
+            "learning_rate": float(continuation_learning_rate),
+        }
+
+    raise ValueError(f"Unsupported RUN_MODE: {run_mode}")
+
+
+def _require_nonempty_run_stem(classifier_run_stem: str) -> str:
+    """Return a non-empty classifier run stem."""
+    cleaned_value = str(classifier_run_stem).strip()
+    if not cleaned_value:
+        raise ValueError("CLASSIFIER_RUN_STEM must not be empty.")
+    return cleaned_value
+
+
+def _validate_classifier_resume_source(run_mode: str, resume_source_dir: str | Path) -> Path:
+    """Confirm that one classifier continuation source has the expected folder type."""
+    resume_source_path = require_existing_path(resume_source_dir, "Resume source directory")
+
+    if run_mode == "resume_checkpoint" and "checkpoint-" not in resume_source_path.name:
+        raise ValueError("resume_checkpoint mode must point to a checkpoint-* directory.")
+
+    if run_mode == "continue_best_model" and resume_source_path.name != "best_model":
+        raise ValueError("continue_best_model mode must point to a best_model directory.")
+
+    return resume_source_path
+
+
+def _extract_classifier_run_coordinates(
+    project_root: str | Path,
+    resume_source_path: str | Path,
+) -> dict[str, str]:
+    """Derive tokenizer family, pretraining experiment, and classifier label from one saved classifier path."""
+    project_root = Path(project_root).resolve()
+    resume_source_path = Path(resume_source_path).resolve()
+    checkpoint_root = (project_root / "checkpoints" / "classification").resolve()
+
+    try:
+        relative_parts = resume_source_path.relative_to(checkpoint_root).parts
+    except ValueError as exc:
+        raise ValueError(
+            "RESUME_SOURCE_DIR must live under the classifier checkpoint root:\n"
+            f"{checkpoint_root}"
+        ) from exc
+
+    if len(relative_parts) < 4:
+        raise ValueError(
+            "RESUME_SOURCE_DIR must follow the standard classifier folder layout:\n"
+            "checkpoints/classification/<tokenizer_family>/<experiment_name>/"
+            "<classifier_run_label>/<checkpoint-or-best_model>"
+        )
+
+    tokenizer_family = validate_tokenizer_family(relative_parts[0])
+    experiment_name = str(relative_parts[1]).strip()
+    classifier_run_label = str(relative_parts[2]).strip()
+
+    if not experiment_name or not classifier_run_label:
+        raise ValueError("Could not derive experiment_name or classifier_run_label from RESUME_SOURCE_DIR.")
+
+    return {
+        "tokenizer_family": tokenizer_family,
+        "experiment_name": experiment_name,
+        "classifier_run_label": classifier_run_label,
+    }
+
+
+def _build_classifier_run_label(run_mode: str, classifier_run_stem: str) -> str:
+    """Build one readable classifier run label from the selected run mode."""
+    if run_mode == "fresh_mlm_checkpoint":
+        return f"{classifier_run_stem}_mlm"
+    if run_mode == "fresh_random_init":
+        return f"{classifier_run_stem}_randominit"
+    if run_mode == "continue_best_model":
+        return f"{classifier_run_stem}_cont"
+    raise ValueError(f"Unsupported run mode for new classifier label construction: {run_mode}")
+
+
+def _resolve_resume_tokenizer_source(
+    resume_source_path: str | Path,
+    output_paths: dict[str, Path],
+) -> Path:
+    """Choose the tokenizer source directory for a resumed classifier run.
+
+    A saved checkpoint directory should contain model weights, but the most
+    reliable tokenizer source is either the original model_source_dir recorded
+    in ``training_config.json`` or, if that is missing, the checkpoint folder
+    itself.
+    """
+    resume_source_path = Path(resume_source_path)
+    training_config_path = output_paths["training_config_path"]
+
+    if training_config_path.exists():
+        try:
+            training_config = json.loads(training_config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            training_config = {}
+        original_model_source_dir = training_config.get("model_source_dir", "")
+        if str(original_model_source_dir).strip():
+            return require_existing_path(original_model_source_dir, "Original model source directory")
+
+    return resume_source_path
+
+
+# ---------------------------------------------------------------------------
+# Notebook-10 path helpers
+# ---------------------------------------------------------------------------
+
+def build_classification_prep_input_paths(
+    project_root: str | Path,
+    classification_prep_dirname: str = "classification_prep",
+) -> dict[str, Path]:
+    """Build the prepared notebook-09 input paths used by notebook 10."""
+    project_root = Path(project_root)
+    prep_dir = project_root / "results" / str(classification_prep_dirname).strip()
+    return {
+        "classification_prep_dir": prep_dir,
+        "train_classification_path": prep_dir / "train_classification.csv",
+        "val_classification_path": prep_dir / "val_classification.csv",
+        "test_classification_path": prep_dir / "test_classification.csv",
+        "label_vocabulary_path": prep_dir / "label_vocabulary.csv",
+    }
+
+
+def build_classification_output_paths(
+    project_root: str | Path,
+    tokenizer_family: str,
+    experiment_name: str,
+    classifier_run_label: str,
+) -> dict[str, Path]:
+    """Build the standard checkpoint and results paths for one classifier run."""
+    project_root = Path(project_root)
+    results_dir = (
+        project_root
+        / "results"
+        / "classification_finetuning"
+        / tokenizer_family
+        / experiment_name
+        / classifier_run_label
+    )
+    checkpoint_dir = (
+        project_root
+        / "checkpoints"
+        / "classification"
+        / tokenizer_family
+        / experiment_name
+        / classifier_run_label
+    )
+
+    results_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "results_dir": results_dir,
+        "checkpoint_dir": checkpoint_dir,
+        "best_model_dir": checkpoint_dir / "best_model",
+        "training_config_path": results_dir / "training_config.json",
+        "trainer_state_copy_path": results_dir / "trainer_state.json",
+        "loss_history_path": results_dir / "loss_history.csv",
+        "loss_curve_path": results_dir / "loss_curves.png",
+        "validation_metrics_path": results_dir / "validation_metrics.csv",
+        "validation_threshold_scan_path": results_dir / "validation_threshold_scan.csv",
+        "validation_prediction_table_path": results_dir / "validation_prediction_table.csv",
+        "best_threshold_path": results_dir / "best_threshold.json",
+        "label_vocabulary_snapshot_path": results_dir / "label_vocabulary_snapshot.csv",
+        "validation_review_summary_path": results_dir / "validation_review_summary.json",
+    }
+
+
+def build_classification_output_validation_paths(output_paths: dict[str, Path]) -> dict[str, Path]:
+    """Return the notebook-10 files treated as overwrite-checked outputs."""
+    return {
+        "training_config_path": output_paths["training_config_path"],
+        "trainer_state_copy_path": output_paths["trainer_state_copy_path"],
+        "loss_history_path": output_paths["loss_history_path"],
+        "loss_curve_path": output_paths["loss_curve_path"],
+        "validation_metrics_path": output_paths["validation_metrics_path"],
+        "validation_threshold_scan_path": output_paths["validation_threshold_scan_path"],
+        "validation_prediction_table_path": output_paths["validation_prediction_table_path"],
+        "best_threshold_path": output_paths["best_threshold_path"],
+        "label_vocabulary_snapshot_path": output_paths["label_vocabulary_snapshot_path"],
+        "validation_review_summary_path": output_paths["validation_review_summary_path"],
+    }
+
+
+def prepare_classification_run(
+    project_root: str | Path,
+    classification_prep_dirname: str,
+    run_mode: str,
+    pretrained_model_dir: str | Path | None,
+    classifier_run_stem: str,
+    resume_source_dir: str | Path | None,
+    overwrite_existing_outputs: bool,
+    initial_num_train_epochs: int,
+    continuation_num_train_epochs: int,
+    base_learning_rate: float,
+    continuation_learning_rate: float,
+    random_seed: int | None,
+    notebook_used: str = NOTEBOOK_PATH,
+) -> dict[str, object]:
+    """Validate notebook-10 settings, resolve paths, and build a reusable run context."""
+    project_root = require_existing_path(project_root, "Project root")
+    normalized_run_mode = _normalize_classifier_run_mode(run_mode)
+    classifier_run_stem = _require_nonempty_run_stem(classifier_run_stem)
+    prep_input_paths = build_classification_prep_input_paths(
+        project_root=project_root,
+        classification_prep_dirname=classification_prep_dirname,
+    )
+
+    for description, path in (
+        ("Prepared train classification table", prep_input_paths["train_classification_path"]),
+        ("Prepared validation classification table", prep_input_paths["val_classification_path"]),
+        ("Prepared test classification table", prep_input_paths["test_classification_path"]),
+        ("Prepared label vocabulary", prep_input_paths["label_vocabulary_path"]),
+    ):
+        require_existing_path(path, description)
+
+    schedule = _resolve_classifier_schedule(
+        run_mode=normalized_run_mode,
+        initial_num_train_epochs=initial_num_train_epochs,
+        continuation_num_train_epochs=continuation_num_train_epochs,
+        base_learning_rate=base_learning_rate,
+        continuation_learning_rate=continuation_learning_rate,
+    )
+
+    resume_from_checkpoint = None
+    model_source_dir = None
+    tokenizer_source_dir = None
+    model_load_mode = None
+    source_summary_path = None
+
+    if normalized_run_mode in {"fresh_mlm_checkpoint", "fresh_random_init"}:
+        model_source_dir = require_existing_path(pretrained_model_dir, "PRETRAINED_MODEL_DIR")
+        run_names = derive_classification_run_names(model_source_dir)
+        tokenizer_family = validate_tokenizer_family(run_names["tokenizer_family"])
+        experiment_name = str(run_names["experiment_name"]).strip()
+        classifier_run_label = _build_classifier_run_label(normalized_run_mode, classifier_run_stem)
+        model_load_mode = (
+            "mlm_checkpoint"
+            if normalized_run_mode == "fresh_mlm_checkpoint"
+            else "random_init"
+        )
+        tokenizer_source_dir = model_source_dir
+        source_summary_path = model_source_dir
+    else:
+        normalized_resume_source = _validate_classifier_resume_source(
+            run_mode=normalized_run_mode,
+            resume_source_dir=resume_source_dir,
+        )
+        coordinates = _extract_classifier_run_coordinates(
+            project_root=project_root,
+            resume_source_path=normalized_resume_source,
+        )
+        tokenizer_family = coordinates["tokenizer_family"]
+        experiment_name = coordinates["experiment_name"]
+
+        if normalized_run_mode == "resume_checkpoint":
+            classifier_run_label = coordinates["classifier_run_label"]
+            resume_from_checkpoint = normalized_resume_source
+            model_source_dir = normalized_resume_source
+        else:
+            classifier_run_label = _build_classifier_run_label(normalized_run_mode, classifier_run_stem)
+            model_source_dir = normalized_resume_source
+            tokenizer_source_dir = normalized_resume_source
+
+        model_load_mode = "classifier_checkpoint"
+        source_summary_path = normalized_resume_source
+
+    output_paths = build_classification_output_paths(
+        project_root=project_root,
+        tokenizer_family=tokenizer_family,
+        experiment_name=experiment_name,
+        classifier_run_label=classifier_run_label,
+    )
+
+    if normalized_run_mode != "resume_checkpoint":
+        validate_output_paths(
+            build_classification_output_validation_paths(output_paths),
+            overwrite_existing_outputs=overwrite_existing_outputs,
+        )
+
+    if normalized_run_mode == "resume_checkpoint":
+        tokenizer_source_dir = _resolve_resume_tokenizer_source(
+            resume_source_path=normalized_resume_source,
+            output_paths=output_paths,
+        )
+
+    resolved_random_seed = resolve_random_seed(random_seed)
+    training_config = {
+        "project_root": str(project_root),
+        "classification_prep_dirname": str(classification_prep_dirname).strip(),
+        "run_mode": normalized_run_mode,
+        "pretrained_model_dir": str(pretrained_model_dir) if pretrained_model_dir else None,
+        "resume_source_dir": str(resume_source_dir) if resume_source_dir else None,
+        "model_source_dir": str(model_source_dir) if model_source_dir else None,
+        "tokenizer_source_dir": str(tokenizer_source_dir) if tokenizer_source_dir else None,
+        "model_load_mode": model_load_mode,
+        "classifier_run_stem": classifier_run_stem,
+        "classifier_run_label": classifier_run_label,
+        "overwrite_existing_outputs": bool(overwrite_existing_outputs),
+        "tokenizer_family": tokenizer_family,
+        "pretrain_experiment_name": experiment_name,
+        "initial_num_train_epochs": int(initial_num_train_epochs),
+        "continuation_num_train_epochs": int(continuation_num_train_epochs),
+        "num_train_epochs": int(schedule["num_train_epochs"]),
+        "base_learning_rate": float(base_learning_rate),
+        "continuation_learning_rate": float(continuation_learning_rate),
+        "learning_rate": float(schedule["learning_rate"]),
+        "seed": int(resolved_random_seed),
+        "results_dir": str(output_paths["results_dir"]),
+        "checkpoint_dir": str(output_paths["checkpoint_dir"]),
+        "best_model_dir": str(output_paths["best_model_dir"]),
+        "notebook_used": notebook_used,
+    }
+
+    return {
+        "settings": training_config,
+        "prep_input_paths": prep_input_paths,
+        "output_paths": output_paths,
+        "resume_from_checkpoint": resume_from_checkpoint,
+        "model_source_dir": model_source_dir,
+        "tokenizer_source_dir": tokenizer_source_dir,
+        "model_load_mode": model_load_mode,
+        "source_summary_path": source_summary_path,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +575,7 @@ def encode_multilabel_targets(
 # ---------------------------------------------------------------------------
 
 def load_classification_tokenizer(model_dir: str | Path):
-    """Load the tokenizer that matches the saved pretrained checkpoint."""
+    """Load the tokenizer that matches one saved classifier or MLM checkpoint."""
     return AutoTokenizer.from_pretrained(str(model_dir))
 
 
@@ -201,13 +584,7 @@ def tokenize_classification_dataframe(
     tokenizer,
     max_length: int,
 ) -> dict[str, object]:
-    """Tokenize glycan sequences and keep multi-label targets aligned.
-
-    The classification notebook works at the sequence level, so every row needs:
-    - tokenized input IDs
-    - tokenized attention masks
-    - one multi-hot float label vector
-    """
+    """Tokenize glycan sequences and keep multi-label targets aligned."""
     _require_columns(
         classification_df,
         [ACCESSION_COLUMN, SEQUENCE_COLUMN, LABEL_VECTOR_COLUMN],
@@ -287,17 +664,40 @@ def build_classification_datasets(
 
 
 # ---------------------------------------------------------------------------
-# Model and output-path helpers
+# Model and training-argument helpers
 # ---------------------------------------------------------------------------
 
 def derive_classification_run_names(model_dir: str | Path) -> dict[str, str]:
     """Derive tokenizer and experiment names from one saved pretrained model path.
 
-    The project is still comparing tokenizer families, so saved classifier
-    outputs should be nested under the tokenizer family and experiment that
-    produced the pretrained checkpoint being fine-tuned.
+    Prefer sibling experiment metadata when it is available because some older
+    continuation runs were saved with extra nesting that makes plain parent-path
+    inference brittle. Fall back to the historical path-based convention only
+    when metadata cannot be found.
     """
     model_path = Path(model_dir)
+
+    for candidate_dir in model_path.parents:
+        metadata_path = candidate_dir / "experiment_metadata.json"
+        if not metadata_path.exists():
+            continue
+
+        try:
+            metadata_payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        tokenizer_family = str(
+            metadata_payload.get("live_hyperparameters", {}).get("tokenizer_family", "")
+        ).strip()
+        experiment_name = str(metadata_payload.get("experiment_name", "")).strip()
+        if tokenizer_family and experiment_name:
+            return {
+                "model_dir_name": model_path.name,
+                "experiment_name": experiment_name,
+                "tokenizer_family": tokenizer_family,
+            }
+
     if len(model_path.parts) < 3:
         raise ValueError(f"Model path is too short to derive run names: {model_path}")
 
@@ -308,71 +708,13 @@ def derive_classification_run_names(model_dir: str | Path) -> dict[str, str]:
     }
 
 
-def build_classification_output_paths(
-    project_root: str | Path,
-    tokenizer_family: str,
-    experiment_name: str,
-    classifier_run_label: str = "default_run",
-) -> dict[str, str]:
-    """Build clear Drive output paths for one classifier fine-tuning run."""
-    project_root = Path(project_root)
-    results_dir = (
-        project_root
-        / "results"
-        / "classification_finetuning"
-        / tokenizer_family
-        / experiment_name
-        / classifier_run_label
-    )
-    checkpoint_dir = (
-        project_root
-        / "checkpoints"
-        / "classification"
-        / tokenizer_family
-        / experiment_name
-        / classifier_run_label
-    )
-
-    results_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    return {
-        "results_dir": str(results_dir),
-        "checkpoint_dir": str(checkpoint_dir),
-        "best_model_dir": str(checkpoint_dir / "best_model"),
-        "training_config_path": str(results_dir / "training_config.json"),
-        "trainer_state_copy_path": str(results_dir / "trainer_state.json"),
-        "loss_history_path": str(results_dir / "loss_history.csv"),
-        "loss_curve_path": str(results_dir / "loss_curves.png"),
-        "validation_metrics_path": str(results_dir / "validation_metrics.csv"),
-        "validation_threshold_scan_path": str(results_dir / "validation_threshold_scan.csv"),
-        "validation_prediction_table_path": str(results_dir / "validation_prediction_table.csv"),
-        "best_threshold_path": str(results_dir / "best_threshold.json"),
-        "label_vocabulary_snapshot_path": str(results_dir / "label_vocabulary_snapshot.csv"),
-    }
-
-
-def save_json(payload: dict[str, object], output_path: str | Path) -> None:
-    """Write one small JSON file to disk with pretty indentation."""
-    Path(output_path).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
 def load_sequence_classification_model(
     pretrained_model_dir: str | Path,
     num_labels: int,
     initialization_mode: str = "mlm_checkpoint",
     device: str | None = None,
 ):
-    """Load a multi-label sequence classifier with a configurable initialization.
-
-    ``mlm_checkpoint`` reuses the encoder weights from the saved MLM checkpoint
-    and initializes a fresh classification head with the requested number of
-    output labels.
-
-    ``random_init`` keeps the same architecture and tokenizer vocabulary but
-    starts the entire classifier from random weights using the saved config as
-    a template.
-    """
+    """Load a multi-label sequence classifier from one requested starting mode."""
     initialization_mode = str(initialization_mode).strip().lower()
 
     if initialization_mode == "mlm_checkpoint":
@@ -386,15 +728,63 @@ def load_sequence_classification_model(
         config.num_labels = int(num_labels)
         config.problem_type = "multi_label_classification"
         model = AutoModelForSequenceClassification.from_config(config)
+    elif initialization_mode == "classifier_checkpoint":
+        model = AutoModelForSequenceClassification.from_pretrained(str(pretrained_model_dir))
     else:
         raise ValueError(
-            "initialization_mode must be either 'mlm_checkpoint' or 'random_init'."
+            "initialization_mode must be one of: "
+            "'mlm_checkpoint', 'random_init', or 'classifier_checkpoint'."
         )
 
     if device is not None:
         model = model.to(torch.device(device))
 
     return model
+
+
+def build_classification_training_arguments(
+    checkpoint_dir: str | Path,
+    learning_rate: float,
+    train_batch_size: int,
+    eval_batch_size: int,
+    num_train_epochs: int,
+    weight_decay: float,
+    save_total_limit: int,
+    random_seed: int,
+) -> dict[str, object]:
+    """Create the Hugging Face training arguments used by notebook 10."""
+    fp16_enabled = bool(torch.cuda.is_available())
+
+    training_args = TrainingArguments(
+        output_dir=str(checkpoint_dir),
+        learning_rate=float(learning_rate),
+        per_device_train_batch_size=int(train_batch_size),
+        per_device_eval_batch_size=int(eval_batch_size),
+        num_train_epochs=int(num_train_epochs),
+        weight_decay=float(weight_decay),
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        logging_strategy="epoch",
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        save_total_limit=int(save_total_limit),
+        seed=int(random_seed),
+        data_seed=int(random_seed),
+        report_to="none",
+        disable_tqdm=True,
+        fp16=fp16_enabled,
+    )
+
+    return {
+        "training_args": training_args,
+        "fp16_enabled": fp16_enabled,
+    }
+
+
+def save_json(payload: dict[str, object], output_path: str | Path) -> Path:
+    """Write one small JSON file to disk with pretty indentation."""
+    return _save_json(payload, output_path)
 
 
 # ---------------------------------------------------------------------------
@@ -426,12 +816,7 @@ def summarize_prediction_density(binary_predictions) -> dict[str, float]:
 
 
 def _safe_average_precision_summary(true_labels, predicted_probabilities) -> dict[str, float]:
-    """Compute macro and weighted average precision robustly.
-
-    Some labels can be very sparse. Rather than relying on one global sklearn
-    call that can be noisy when a label has no positives, this helper computes
-    one label at a time and then aggregates only across labels with support.
-    """
+    """Compute macro and weighted average precision robustly."""
     from sklearn.metrics import average_precision_score
 
     true_array = np.asarray(true_labels, dtype=int)
@@ -568,6 +953,89 @@ def save_threshold_scan(threshold_results_df: "pd.DataFrame", output_path: str |
 
 
 # ---------------------------------------------------------------------------
+# Validation-review helpers
+# ---------------------------------------------------------------------------
+
+def build_classification_validation_review(
+    trainer_state_path: str | Path,
+    tokenizer_family: str,
+    pretrain_experiment_name: str,
+    classifier_run_label: str,
+    run_mode: str,
+    total_epochs: int,
+) -> dict[str, object]:
+    """Build the notebook-10 validation review bundle from saved trainer history."""
+    log_history_df = load_trainer_history(str(trainer_state_path))
+    train_rows, eval_rows = split_train_eval_history(log_history_df)
+
+    if train_rows.empty or eval_rows.empty:
+        raise ValueError("Trainer history does not contain both training and validation loss rows.")
+
+    loss_history_df = merge_loss_history(train_rows, eval_rows)
+    best_epoch_summary = summarize_best_epoch(eval_rows)
+    continuation_recommendation = recommend_continuation(
+        eval_rows,
+        total_epochs=int(total_epochs),
+    )
+
+    validation_review_summary = {
+        "tokenizer_family": str(tokenizer_family),
+        "pretrain_experiment_name": str(pretrain_experiment_name),
+        "classifier_run_label": str(classifier_run_label),
+        "run_mode": str(run_mode),
+        "best_epoch_summary": best_epoch_summary,
+        "continuation_recommendation": continuation_recommendation,
+    }
+
+    summary_df = pd.DataFrame(
+        {
+            "metric": [
+                "best_epoch",
+                "best_val_loss",
+                "last_epoch",
+                "last_val_loss",
+                "continuation_recommendation",
+            ],
+            "value": [
+                best_epoch_summary["best_epoch"],
+                best_epoch_summary["best_val_loss"],
+                best_epoch_summary["last_epoch"],
+                best_epoch_summary["last_val_loss"],
+                continuation_recommendation,
+            ],
+        }
+    )
+
+    return {
+        "log_history_df": log_history_df,
+        "train_rows": train_rows,
+        "eval_rows": eval_rows,
+        "loss_history_df": loss_history_df,
+        "best_epoch_summary": best_epoch_summary,
+        "continuation_recommendation": continuation_recommendation,
+        "validation_review_summary": validation_review_summary,
+        "summary_df": summary_df,
+    }
+
+
+def save_classification_validation_review(
+    validation_review_bundle: dict[str, object],
+    output_paths: dict[str, Path],
+) -> dict[str, Path]:
+    """Save the classifier validation-review artifacts for notebook 10."""
+    validation_review_bundle["loss_history_df"].to_csv(output_paths["loss_history_path"], index=False)
+    _save_json(
+        validation_review_bundle["validation_review_summary"],
+        output_paths["validation_review_summary_path"],
+    )
+
+    return {
+        "loss_history_path": output_paths["loss_history_path"],
+        "validation_review_summary_path": output_paths["validation_review_summary_path"],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Prediction-table helpers
 # ---------------------------------------------------------------------------
 
@@ -586,17 +1054,7 @@ def build_classification_prediction_table(
     predicted_labels,
     label_vocabulary_df: "pd.DataFrame",
 ) -> "pd.DataFrame":
-    """Create a readable table of true labels, predicted labels, and probabilities.
-
-    The full 41-label probability vector is useful for later deeper analysis,
-    but it is awkward to read in a notebook table. This export keeps a smaller
-    human-facing summary by storing:
-
-    - the true label set
-    - the predicted positive label set
-    - the probabilities attached to the predicted positive labels
-    - a top-5 label-probability preview for quick inspection
-    """
+    """Create a readable table of true labels, predicted labels, and probabilities."""
     _require_columns(
         source_df,
         [ACCESSION_COLUMN, SEQUENCE_COLUMN, LABEL_LIST_COLUMN],

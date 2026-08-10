@@ -10,8 +10,9 @@ clean and separate from model selection:
 - save final metrics, per-label tables, ROC curves, and PR curves
 
 The plotting defaults are intentionally conservative. All labels are evaluated
-and saved in tables, but only the top supported labels are plotted at first so
-the figures stay readable.
+in tables, but only the top supported labels are plotted so the saved figures
+stay readable and the output folder does not become cluttered with redundant
+artifacts.
 """
 
 from __future__ import annotations
@@ -29,12 +30,8 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from src.classification_training import (
-    ACCESSION_COLUMN,
-    LABEL_LIST_COLUMN,
-    SEQUENCE_COLUMN,
     SPLIT_COLUMN,
     GlycanClassificationDataset,
-    _serialize_json,
     binarize_multilabel_predictions,
     build_classification_prediction_table,
     build_label_name_to_id,
@@ -44,9 +41,79 @@ from src.classification_training import (
     sigmoid_predictions_from_logits,
     tokenize_classification_dataframe,
 )
+from src.notebook_utils import (
+    require_existing_path,
+    stringify_path_values,
+    validate_output_paths,
+    validate_tokenizer_family,
+    write_json,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+
+NOTEBOOK_PATH = "notebooks/11_classification_evaluation.ipynb"
+
+
+def _require_nonempty_setting(value: str, setting_name: str) -> str:
+    """Return one stripped non-empty notebook setting value."""
+    cleaned_value = str(value).strip()
+    if not cleaned_value:
+        raise ValueError(f"{setting_name} must not be empty.")
+    return cleaned_value
+
+
+def build_classification_evaluation_input_paths(
+    project_root: str | Path,
+    classification_prep_dirname: str,
+    tokenizer_family: str,
+    experiment_name: str,
+    source_classifier_run_label: str,
+) -> dict[str, Path]:
+    """Build the required notebook-11 input paths for one evaluation run."""
+    project_root = Path(project_root)
+    classification_prep_dir = project_root / "results" / str(classification_prep_dirname).strip()
+
+    return {
+        "classification_prep_dir": classification_prep_dir,
+        "classifier_best_model_dir": (
+            project_root
+            / "checkpoints"
+            / "classification"
+            / tokenizer_family
+            / experiment_name
+            / source_classifier_run_label
+            / "best_model"
+        ),
+        "best_threshold_path": (
+            project_root
+            / "results"
+            / "classification_finetuning"
+            / tokenizer_family
+            / experiment_name
+            / source_classifier_run_label
+            / "best_threshold.json"
+        ),
+        "label_vocabulary_path": (
+            project_root
+            / "results"
+            / "classification_finetuning"
+            / tokenizer_family
+            / experiment_name
+            / source_classifier_run_label
+            / "label_vocabulary_snapshot.csv"
+        ),
+        "test_classification_path": classification_prep_dir / "test_classification.csv",
+    }
+
+
+def save_classification_evaluation_config(
+    evaluation_settings: dict[str, object],
+    output_path: str | Path,
+) -> Path:
+    """Save the resolved notebook-11 settings before evaluation begins."""
+    return write_json(output_path, evaluation_settings)
 
 
 def load_best_threshold(best_threshold_path: str | Path) -> dict[str, object]:
@@ -520,8 +587,8 @@ def build_classification_evaluation_output_paths(
     tokenizer_family: str,
     experiment_name: str,
     classifier_run_label: str,
-) -> dict[str, str]:
-    """Build the Drive output paths for one final classification evaluation."""
+) -> dict[str, Path]:
+    """Build the standard saved-output paths for one notebook-11 run."""
     project_root = Path(project_root)
     results_dir = (
         project_root
@@ -534,51 +601,164 @@ def build_classification_evaluation_output_paths(
     results_dir.mkdir(parents=True, exist_ok=True)
 
     return {
-        "results_dir": str(results_dir),
-        "evaluation_config_path": str(results_dir / "evaluation_config.json"),
-        "test_metrics_csv_path": str(results_dir / "test_metrics.csv"),
-        "test_metrics_json_path": str(results_dir / "test_metrics.json"),
-        "per_label_metrics_path": str(results_dir / "per_label_metrics.csv"),
-        "support_weighted_error_summary_path": str(results_dir / "support_weighted_error_summary.csv"),
-        "roc_summary_path": str(results_dir / "roc_auc_per_label.csv"),
-        "pr_summary_path": str(results_dir / "average_precision_per_label.csv"),
-        "curve_aggregate_summary_path": str(results_dir / "curve_aggregate_summary.csv"),
-        "exact_match_summary_path": str(results_dir / "exact_match_summary.csv"),
-        "top10_roc_summary_path": str(results_dir / "top10_supported_roc_summary.csv"),
-        "top10_pr_summary_path": str(results_dir / "top10_supported_pr_summary.csv"),
-        "exact_match_roc_plot_path": str(results_dir / "exact_match_roc_curve.png"),
-        "exact_match_pr_plot_path": str(results_dir / "exact_match_pr_curve.png"),
-        "top10_roc_plot_path": str(results_dir / "top10_supported_roc_curves.png"),
-        "top10_pr_plot_path": str(results_dir / "top10_supported_pr_curves.png"),
-        "test_prediction_table_path": str(results_dir / "test_prediction_table.csv"),
+        "results_dir": results_dir,
+        "evaluation_config_path": results_dir / "evaluation_config.json",
+        "test_metrics_csv_path": results_dir / "test_metrics.csv",
+        "test_metrics_json_path": results_dir / "test_metrics.json",
+        "per_label_metrics_path": results_dir / "per_label_metrics.csv",
+        "roc_summary_path": results_dir / "roc_auc_per_label.csv",
+        "pr_summary_path": results_dir / "average_precision_per_label.csv",
+        "curve_aggregate_summary_path": results_dir / "curve_aggregate_summary.csv",
+        "exact_match_summary_path": results_dir / "exact_match_summary.csv",
+        "exact_match_roc_plot_path": results_dir / "exact_match_roc_curve.png",
+        "exact_match_pr_plot_path": results_dir / "exact_match_pr_curve.png",
+        "test_prediction_table_path": results_dir / "test_prediction_table.csv",
+    }
+
+
+def build_classification_evaluation_output_validation_paths(
+    output_paths: dict[str, Path],
+) -> dict[str, Path]:
+    """Return the saved notebook-11 files that participate in overwrite checks."""
+    return {
+        "evaluation_config_path": output_paths["evaluation_config_path"],
+        "test_metrics_csv_path": output_paths["test_metrics_csv_path"],
+        "test_metrics_json_path": output_paths["test_metrics_json_path"],
+        "per_label_metrics_path": output_paths["per_label_metrics_path"],
+        "roc_summary_path": output_paths["roc_summary_path"],
+        "pr_summary_path": output_paths["pr_summary_path"],
+        "curve_aggregate_summary_path": output_paths["curve_aggregate_summary_path"],
+        "exact_match_summary_path": output_paths["exact_match_summary_path"],
+        "exact_match_roc_plot_path": output_paths["exact_match_roc_plot_path"],
+        "exact_match_pr_plot_path": output_paths["exact_match_pr_plot_path"],
+        "test_prediction_table_path": output_paths["test_prediction_table_path"],
+    }
+
+
+def prepare_classification_evaluation_run(
+    project_root: str | Path,
+    classification_prep_dirname: str,
+    tokenizer_family: str,
+    pretrain_experiment_name: str,
+    source_classifier_run_label: str,
+    evaluation_run_label: str,
+    overwrite_existing_outputs: bool,
+    max_length: int,
+    eval_batch_size: int,
+    notebook_used: str = NOTEBOOK_PATH,
+) -> dict[str, object]:
+    """Validate notebook-11 settings and build one reusable evaluation context."""
+    project_root = require_existing_path(project_root, "Project root")
+    tokenizer_family = validate_tokenizer_family(tokenizer_family)
+    pretrain_experiment_name = _require_nonempty_setting(
+        pretrain_experiment_name,
+        "PRETRAIN_EXPERIMENT_NAME",
+    )
+    source_classifier_run_label = _require_nonempty_setting(
+        source_classifier_run_label,
+        "SOURCE_CLASSIFIER_RUN_LABEL",
+    )
+    evaluation_run_label = _require_nonempty_setting(
+        evaluation_run_label,
+        "EVALUATION_RUN_LABEL",
+    )
+
+    if int(max_length) <= 0:
+        raise ValueError("MAX_LENGTH must be a positive integer.")
+    if int(eval_batch_size) <= 0:
+        raise ValueError("EVAL_BATCH_SIZE must be a positive integer.")
+
+    input_paths = build_classification_evaluation_input_paths(
+        project_root=project_root,
+        classification_prep_dirname=classification_prep_dirname,
+        tokenizer_family=tokenizer_family,
+        experiment_name=pretrain_experiment_name,
+        source_classifier_run_label=source_classifier_run_label,
+    )
+
+    for description, path in (
+        ("Prepared classification results directory", input_paths["classification_prep_dir"]),
+        ("Saved classifier best-model directory", input_paths["classifier_best_model_dir"]),
+        ("Saved validation threshold", input_paths["best_threshold_path"]),
+        ("Saved label vocabulary snapshot", input_paths["label_vocabulary_path"]),
+        ("Prepared test classification table", input_paths["test_classification_path"]),
+    ):
+        require_existing_path(path, description)
+
+    output_paths = build_classification_evaluation_output_paths(
+        project_root=project_root,
+        tokenizer_family=tokenizer_family,
+        experiment_name=pretrain_experiment_name,
+        classifier_run_label=evaluation_run_label,
+    )
+    validate_output_paths(
+        output_paths=build_classification_evaluation_output_validation_paths(output_paths),
+        overwrite_existing_outputs=overwrite_existing_outputs,
+    )
+
+    evaluation_settings = stringify_path_values(
+        {
+            "notebook_used": notebook_used,
+            "project_root": project_root,
+            "classification_prep_results_dirname": classification_prep_dirname,
+            "tokenizer_family": tokenizer_family,
+            "pretrain_experiment_name": pretrain_experiment_name,
+            "source_classifier_run_label": source_classifier_run_label,
+            "evaluation_run_label": evaluation_run_label,
+            "overwrite_existing_outputs": bool(overwrite_existing_outputs),
+            "classifier_best_model_dir": input_paths["classifier_best_model_dir"],
+            "best_threshold_path": input_paths["best_threshold_path"],
+            "label_vocabulary_path": input_paths["label_vocabulary_path"],
+            "test_classification_path": input_paths["test_classification_path"],
+            "max_length": int(max_length),
+            "eval_batch_size": int(eval_batch_size),
+            "saved_outputs": [
+                "evaluation_config.json",
+                "test_metrics.csv",
+                "test_metrics.json",
+                "per_label_metrics.csv",
+                "roc_auc_per_label.csv",
+                "average_precision_per_label.csv",
+                "curve_aggregate_summary.csv",
+                "exact_match_summary.csv",
+                "exact_match_roc_curve.png",
+                "exact_match_pr_curve.png",
+                "test_prediction_table.csv",
+            ],
+            "not_saved_outputs": [
+                "support_weighted_error_summary.csv",
+                "label_subset_roc_plots.png",
+                "label_subset_pr_plots.png",
+            ],
+        }
+    )
+
+    return {
+        "settings": evaluation_settings,
+        "input_paths": input_paths,
+        "output_paths": output_paths,
     }
 
 
 def save_classification_evaluation_outputs(
     test_metrics: dict[str, object],
     per_label_metrics_df: "pd.DataFrame",
-    support_weighted_error_summary_df: "pd.DataFrame",
     roc_summary_df: "pd.DataFrame",
     pr_summary_df: "pd.DataFrame",
     curve_aggregate_summary_df: "pd.DataFrame",
     exact_match_summary_df: "pd.DataFrame",
-    top10_roc_summary_df: "pd.DataFrame",
-    top10_pr_summary_df: "pd.DataFrame",
     test_prediction_table_df: "pd.DataFrame",
-    output_paths: dict[str, str],
+    output_paths: dict[str, Path],
 ) -> None:
-    """Write final evaluation tables and summaries to disk."""
+    """Write the focused notebook-11 output set to disk."""
     pd.DataFrame([test_metrics]).to_csv(output_paths["test_metrics_csv_path"], index=False)
     Path(output_paths["test_metrics_json_path"]).write_text(
         json.dumps(test_metrics, indent=2),
         encoding="utf-8",
     )
     per_label_metrics_df.to_csv(output_paths["per_label_metrics_path"], index=False)
-    support_weighted_error_summary_df.to_csv(output_paths["support_weighted_error_summary_path"], index=False)
     roc_summary_df.to_csv(output_paths["roc_summary_path"], index=False)
     pr_summary_df.to_csv(output_paths["pr_summary_path"], index=False)
     curve_aggregate_summary_df.to_csv(output_paths["curve_aggregate_summary_path"], index=False)
     exact_match_summary_df.to_csv(output_paths["exact_match_summary_path"], index=False)
-    top10_roc_summary_df.to_csv(output_paths["top10_roc_summary_path"], index=False)
-    top10_pr_summary_df.to_csv(output_paths["top10_pr_summary_path"], index=False)
     test_prediction_table_df.to_csv(output_paths["test_prediction_table_path"], index=False)
