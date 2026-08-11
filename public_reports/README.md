@@ -11,6 +11,7 @@ Current notebook roots:
 
 - `public_reports/07_similarity_analysis/`
 - `public_reports/08_similarity_scaleup/`
+- `public_reports/13_pooling_metric_comparison/`
 - `public_reports/12_glyberta_similarity_model_comparison/`
 
 The intended workflow is:
@@ -26,11 +27,27 @@ Expected repo destinations are notebook-specific, for example:
 - notebook 7:
   `public_reports/07_similarity_analysis/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrained_mlm/live_extended/`
 - notebook 7 classifier run:
-  `public_reports/07_similarity_analysis/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/cls_lr2e-5_ep100_bs16_mlm/live_extended/`
+  `public_reports/07_similarity_analysis/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/classification_mlm_init/live_extended__manual__classification_mlm_init__mean_pool/`
 - notebook 8:
-  `public_reports/08_similarity_scaleup/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrained_mlm/live_extended/`
+  `public_reports/08_similarity_scaleup/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrained_mlm/live_extended__manual__pretrained_mlm__mean_pool/`
+- notebook 8 classifier run:
+  `public_reports/08_similarity_scaleup/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/classification_random_init/live_extended__manual__classification_random_init__max_pool/`
 - notebook 12:
   `public_reports/12_glyberta_similarity_model_comparison/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/pretrain_vs_classifier_mlm_vs_randominit/`
+- notebook 13:
+  `public_reports/13_pooling_metric_comparison/manual/mlm15_L6_H512_A8_lr00001_ep100_setv1_train_only/classification_mlm_init/classification_mlm_init__live_extended__cls_mean_max/`
+
+New public exports should use the clean report-facing model IDs:
+
+- `pretrained_mlm`
+- `classification_mlm_init`
+- `classification_random_init`
+
+For classification runs, the notebooks may still load checkpoints from legacy
+Drive folder names such as `cls_lr2e-5_ep10_bs16_mlm` or
+`cls_lr2e-5_ep10_bs16_randominit`. That legacy label is only the checkpoint
+folder name used for loading. It should not be reused as the public-facing
+report folder name for new exports.
 
 This folder is meant for browser-facing HTML only, not full notebook output
 trees, Drive-only artifacts, or intermediate CSV/debug files unless you
