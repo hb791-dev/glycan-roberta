@@ -7,6 +7,10 @@ The public layout is notebook-based on purpose. Each top-level folder maps back
 to the notebook that produced the report, which keeps new report families easy
 to place without inventing a second taxonomy for HTML outputs.
 
+During large rerun cycles, the notebook-specific folders may be intentionally
+emptied between report batches so stale published HTML does not get confused
+with the current run set.
+
 Current notebook roots:
 
 - `public_reports/07_similarity_analysis/`
