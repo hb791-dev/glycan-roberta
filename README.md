@@ -629,16 +629,16 @@ Notes:
 ### `08_similarity_scaleup.ipynb`
 
 Purpose:
-- run a broader test-set similarity analysis after the smaller manual variant review
-- load one saved checkpoint and compare the full held-out test set against itself
-- run `all vs all` similarity across the test set to get the background distribution
-- run `specific vs all` similarity for professor-selected glycans against the test set
+- run a broader full-corpus similarity analysis after the smaller manual variant review
+- load one saved checkpoint and compare the full accession-aware raw corpus against itself
+- run `all vs all` similarity across the corpus to get the background distribution
+- run `specific vs all` similarity for professor-selected glycans against the corpus
 - build threshold-based similarity clouds and HTML reports for the selected glycans
 - compare alternate embedding pooling strategies by changing one notebook setting
   and saving each run under its own pooling-labeled folder
 
 Main outputs:
-- `test_corpus_sequences.csv`
+- `corpus_sequences.csv`
 - `selected_glycans.csv`
 - `all_vs_all_similarity_matrix.csv`
 - `all_vs_all_summary.csv`
@@ -655,16 +655,21 @@ Main outputs:
 - clean public HTML export folder in Drive
 
 Notes:
-- this notebook uses the real held-out `test.txt` split in Drive and assigns
-  stable internal test-row IDs to the corpus side because the current Drive
-  project does not include an accession-aware test-set table
+- this notebook uses the accession-aware raw Drive file
+  `data/raw/accession_reference_corpus.csv`, so the corpus side keeps real
+  glycan accessions instead of temporary test-row IDs
 - the four professor-selected GlyTouCan accessions are currently configured
   directly inside the notebook together with their compact IUPAC sequences, and
-  they may be external query glycans rather than members of the held-out split
+  they may still be external query glycans rather than members of the saved
+  corpus file
 - the reusable mechanics live in `src/similarity.py`
 - notebook 8 can now load either a pretraining MLM checkpoint or a
-  classification-finetuned checkpoint, using a `CHECKPOINT_SOURCE` toggle plus
-  `CLASSIFIER_RUN_LABEL` when the classification checkpoint layout is used
+  classification checkpoint, using a `CHECKPOINT_SOURCE` toggle plus
+  clean model-state IDs `pretrained_mlm`, `classification_mlm_init`, and
+  `classification_random_init` for saved output naming
+- when `CHECKPOINT_SOURCE = 'classification'`, `CLASSIFIER_RUN_LABEL` still
+  points to the real saved classifier folder in Drive while
+  `CLASSIFICATION_MODEL_ID` controls the cleaner report-facing name
 - the notebook saves outputs under `results/similarity_scaleup/`
 - the notebook now exposes `POOLING_STRATEGY`, and the saved `OUTPUT_RUN_LABEL`
   should carry a suffix such as `mean_pool` or `max_pool` so comparison runs

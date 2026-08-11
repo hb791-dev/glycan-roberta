@@ -43,6 +43,7 @@ from src.similarity_scaleup import (
     build_threshold_cloud_table,
     compare_queries_to_corpus,
     export_public_scaleup_html,
+    load_accession_reference_corpus,
     load_plaintext_sequence_corpus,
     plot_similarity_distribution_histogram,
     prepare_selected_query_panels,

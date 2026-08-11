@@ -1,6 +1,6 @@
-"""Test-set scale-up similarity workflow helpers.
+"""Scale-up similarity workflow helpers.
 
-This module contains the broader held-out-corpus analysis path: dataframe
+This module contains the broader corpus-scale analysis path: dataframe
 normalization, query-vs-corpus comparison, threshold clouds, scale-up HTML
 reports, and the end-to-end save/run orchestration for notebook 8.
 """
@@ -79,7 +79,7 @@ def validate_scaleup_similarity_inputs(
     sequence_col: str = "sequence",
     output_dir=None,
 ) -> None:
-    """Validate the inputs needed for the test-set scale-up similarity workflow."""
+    """Validate the inputs needed for the corpus-scale similarity workflow."""
     import pandas as pd
 
     model_path = Path(model_dir)
@@ -149,6 +149,58 @@ def load_plaintext_sequence_corpus(
         lambda row_number: f"{accession_prefix}_{row_number:05d}"
     )
     return test_df[["accession", "sequence", "test_row_number"]]
+
+
+def load_accession_reference_corpus(
+    accession_reference_path: str | Path,
+) -> "pd.DataFrame":
+    """Load the accession-aware raw glycan corpus for notebook 8.
+
+    The raw full-corpus workflow uses the accession-aware Drive export rather
+    than a split text file, so this loader normalizes the accession and
+    sequence columns into the same two-column shape used elsewhere in the
+    similarity helpers.
+    """
+
+    import pandas as pd
+
+    accession_reference_path = Path(accession_reference_path)
+    if not accession_reference_path.exists():
+        raise FileNotFoundError(f"Accession reference corpus not found: {accession_reference_path}")
+
+    accession_df = pd.read_csv(accession_reference_path)
+
+    if "glycan_id" in accession_df.columns:
+        accession_column = "glycan_id"
+    elif "accession" in accession_df.columns:
+        accession_column = "accession"
+    else:
+        raise ValueError(
+            "Accession reference corpus must include either 'glycan_id' or 'accession'."
+        )
+
+    if "normalized_iupac" in accession_df.columns:
+        sequence_column = "normalized_iupac"
+    elif "sequence" in accession_df.columns:
+        sequence_column = "sequence"
+    else:
+        raise ValueError(
+            "Accession reference corpus must include either 'normalized_iupac' or 'sequence'."
+        )
+
+    cleaned_df = accession_df[[accession_column, sequence_column]].copy()
+    cleaned_df[accession_column] = cleaned_df[accession_column].fillna("").map(str).map(str.strip)
+    cleaned_df[sequence_column] = cleaned_df[sequence_column].fillna("").map(str).map(str.strip)
+    cleaned_df = cleaned_df.loc[
+        cleaned_df[accession_column].ne("") & cleaned_df[sequence_column].ne("")
+    ].copy()
+    cleaned_df = cleaned_df.drop_duplicates(
+        subset=[accession_column, sequence_column]
+    ).reset_index(drop=True)
+    cleaned_df = cleaned_df.rename(
+        columns={accession_column: "accession", sequence_column: "sequence"}
+    )
+    return cleaned_df[["accession", "sequence"]]
 
 
 def prepare_selected_query_panels(
@@ -445,9 +497,9 @@ def build_all_vs_all_artifacts(
     sequence_col: str = "sequence",
     top_k: int = 10,
 ) -> dict:
-    """Build matrix, summary, and top-neighbor views for the full test-set corpus.
+    """Build matrix, summary, and top-neighbor views for the full corpus.
 
-    This is the background distribution for the entire held-out test set. It
+    This is the background distribution for the entire comparison corpus. It
     tells us what "typical" similarities look like before we zoom in on any one
     selected glycan.
     """
@@ -533,7 +585,7 @@ def compare_queries_to_corpus(
     accession_col: str = "accession",
     sequence_col: str = "sequence",
 ) -> "pd.DataFrame":
-    """Compare one or more selected glycans against an entire test-set corpus.
+    """Compare one or more selected glycans against an entire corpus.
 
     The returned dataframe is the master ranked list. The threshold-cloud view is
     just a filtered slice of this ranked list at one or more similarity cutoffs.
@@ -556,11 +608,10 @@ def compare_queries_to_corpus(
         comparison_df.insert(0, "query_accession", query_row[accession_col])
         comparison_df["cosine_similarity"] = similarity_scores.numpy()
 
-        # In the scale-up workflow the held-out corpus may only have plain text
-        # split rows rather than trusted accession labels. Sequence identity is
-        # therefore the most stable self-match rule: anything with the exact
-        # same sequence as the query is treated as the self row for ranking and
-        # summary purposes.
+        # Sequence identity is the most stable self-match rule across both the
+        # accession-aware full-corpus workflow and the older split-text runs.
+        # Anything with the exact same sequence as the query is treated as the
+        # self row for ranking and summary purposes.
         comparison_df["is_self_match"] = comparison_df["corpus_sequence"] == query_row[sequence_col]
         comparison_df = comparison_df.sort_values(
             ["cosine_similarity", "corpus_accession", "corpus_sequence"],
@@ -1962,7 +2013,7 @@ def save_scaleup_similarity_outputs(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    corpus_path = output_path / "test_corpus_sequences.csv"
+    corpus_path = output_path / "corpus_sequences.csv"
     query_path = output_path / "selected_glycans.csv"
     all_vs_all_matrix_path = output_path / "all_vs_all_similarity_matrix.csv"
     all_vs_all_summary_path = output_path / "all_vs_all_summary.csv"
@@ -2168,12 +2219,12 @@ def run_scaleup_similarity_analysis(
     cartoon_cache_manifest_path=None,
     cartoon_cache_only: bool = False,
 ) -> dict:
-    """Run the full test-set similarity scale-up workflow and save the outputs."""
+    """Run the full corpus-scale similarity workflow and save the outputs."""
     cleaned_corpus_df = _clean_similarity_dataframe(corpus_df, accession_col=accession_col, sequence_col=sequence_col)
     cleaned_query_df = _clean_similarity_dataframe(query_df, accession_col=accession_col, sequence_col=sequence_col)
     normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
 
-    # First embed the full held-out test set. Those embeddings power both the
+    # First embed the full corpus. Those embeddings power both the
     # all-vs-all background distribution and the specific-vs-all query analysis.
     corpus_embedding_bundle = build_embedding_lookup_for_dataframe(
         cleaned_corpus_df,
@@ -2186,9 +2237,9 @@ def run_scaleup_similarity_analysis(
         batch_size=batch_size,
         pooling_strategy=normalized_pooling_strategy,
     )
-    # The selected glycans do not need to be members of the held-out test split.
+    # The selected glycans do not need to be members of the comparison corpus.
     # Embed them separately so specific-vs-all can compare an external query panel
-    # against the full test corpus.
+    # against the full corpus.
     query_embedding_bundle = build_embedding_lookup_for_dataframe(
         cleaned_query_df,
         tokenizer=tokenizer,

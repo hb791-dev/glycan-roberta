@@ -420,12 +420,19 @@ def load_matched_pooling_outputs(
                 f"but saved config says {config_pooling!r}."
             )
 
+        corpus_path = run_dir / "corpus_sequences.csv"
+        if not corpus_path.exists():
+            # Older notebook-8 runs saved the same table under a test-specific
+            # filename before the workflow switched to the accession-aware full
+            # corpus.
+            corpus_path = run_dir / "test_corpus_sequences.csv"
+
         artifacts_by_pooling[pooling_strategy] = {
             "spec": dict(spec),
             "run_dir": run_dir,
             "config": config,
             "selected_glycans": _read_csv_required(run_dir / "selected_glycans.csv"),
-            "test_corpus": _read_csv_required(run_dir / "test_corpus_sequences.csv"),
+            "corpus": _read_csv_required(corpus_path),
             "specific_vs_all_ranked": _read_csv_required(run_dir / "specific_vs_all_ranked.csv"),
             "specific_vs_all_summary": _read_csv_required(run_dir / "specific_vs_all_distribution_summary.csv"),
             "all_vs_all_summary": _read_csv_required(run_dir / "all_vs_all_summary.csv"),
@@ -443,7 +450,7 @@ def load_matched_pooling_outputs(
     reference_artifacts = artifacts_by_pooling[reference_pooling]
     reference_config = reference_artifacts["config"]
     reference_queries_df = reference_artifacts["selected_glycans"]
-    reference_corpus_df = reference_artifacts["test_corpus"]
+    reference_corpus_df = reference_artifacts["corpus"]
     reference_ranked_df = reference_artifacts["specific_vs_all_ranked"]
 
     shared_config_keys = [
@@ -475,9 +482,9 @@ def load_matched_pooling_outputs(
         )
         _assert_matching_frames(
             reference_corpus_df,
-            artifacts["test_corpus"],
+            artifacts["corpus"],
             columns=["accession", "sequence"],
-            description="test_corpus_sequences.csv",
+            description="corpus_sequences.csv",
         )
         _assert_matching_frames(
             reference_ranked_df,
@@ -502,7 +509,7 @@ def load_matched_pooling_outputs(
                 "model_dir": str(config.get("model_dir", "")),
                 "output_name": str(config.get("output_name", "")),
                 "query_count": int(len(artifacts["selected_glycans"])),
-                "corpus_count": int(len(artifacts["test_corpus"])),
+                "corpus_count": int(len(artifacts["corpus"])),
                 "matched_pair_count": int(len(ranked_df)),
                 "non_self_pair_count": non_self_pair_count,
                 "all_vs_all_mean": float(all_vs_all_summary_df.iloc[0]["mean"]),
@@ -516,7 +523,7 @@ def load_matched_pooling_outputs(
         "matched_run_summary": pd.DataFrame(run_summary_rows),
         "shared_model_dir": str(reference_config.get("model_dir", "")),
         "selected_glycans_df": reference_queries_df.copy(),
-        "test_corpus_df": reference_corpus_df.copy(),
+        "corpus_df": reference_corpus_df.copy(),
     }
 
 
