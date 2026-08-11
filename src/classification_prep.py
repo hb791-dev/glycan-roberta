@@ -58,7 +58,6 @@ def build_classification_prep_output_paths(output_dir: str | Path) -> dict[str, 
     output_dir = Path(output_dir)
     return {
         "labeled_glycans_path": output_dir / "labeled_glycans.csv",
-        "labeled_glycans_with_split_path": output_dir / "labeled_glycans_with_split.csv",
         "prepared_classification_rows_path": output_dir / "prepared_classification_rows.csv",
         "train_classification_path": output_dir / "train_classification.csv",
         "val_classification_path": output_dir / "val_classification.csv",
@@ -412,7 +411,6 @@ def summarize_classification_dataset(
 def save_classification_prep_outputs(
     labeled_df: "pd.DataFrame",
     prepared_with_split_df: "pd.DataFrame",
-    labeled_with_split_df: "pd.DataFrame",
     label_vocabulary_df: "pd.DataFrame",
     dataset_summary_df: "pd.DataFrame",
     split_summary_df: "pd.DataFrame",
@@ -433,11 +431,6 @@ def save_classification_prep_outputs(
         _serialize_labels
     )
 
-    labeled_with_split_output_df = labeled_with_split_df.copy()
-    labeled_with_split_output_df["labels_json"] = labeled_with_split_output_df[LABEL_LIST_COLUMN].map(
-        _serialize_labels
-    )
-
     train_output_df = prepared_with_split_output_df.loc[
         prepared_with_split_output_df[SPLIT_COLUMN] == "train"
     ].copy()
@@ -451,7 +444,6 @@ def save_classification_prep_outputs(
     output_paths = build_classification_prep_output_paths(output_dir)
 
     labeled_output_df.to_csv(output_paths["labeled_glycans_path"], index=False)
-    labeled_with_split_output_df.to_csv(output_paths["labeled_glycans_with_split_path"], index=False)
     prepared_with_split_output_df.to_csv(output_paths["prepared_classification_rows_path"], index=False)
     train_output_df.to_csv(output_paths["train_classification_path"], index=False)
     val_output_df.to_csv(output_paths["val_classification_path"], index=False)
@@ -491,16 +483,12 @@ def run_classification_prep_pipeline(
     joined_df = join_sequences_with_labels(accession_df, accession_label_df)
     prepared_with_split_df = assign_splits_by_sequence(joined_df, split_lookup)
     labeled_df = joined_df.loc[joined_df["has_labels"]].copy().reset_index(drop=True)
-    labeled_with_split_df = prepared_with_split_df.loc[
-        prepared_with_split_df["has_labels"]
-    ].copy().reset_index(drop=True)
 
     label_vocabulary_df = build_label_vocabulary(prepared_with_split_df)
     summary_bundle = summarize_classification_dataset(joined_df, prepared_with_split_df, label_vocabulary_df)
     output_paths = save_classification_prep_outputs(
         labeled_df=labeled_df,
         prepared_with_split_df=prepared_with_split_df,
-        labeled_with_split_df=labeled_with_split_df,
         label_vocabulary_df=label_vocabulary_df,
         dataset_summary_df=summary_bundle["dataset_summary_df"],
         split_summary_df=summary_bundle["split_summary_df"],
@@ -516,7 +504,6 @@ def run_classification_prep_pipeline(
         "accession_label_df": accession_label_df,
         "labeled_df": labeled_df,
         "prepared_with_split_df": prepared_with_split_df,
-        "labeled_with_split_df": labeled_with_split_df,
         "label_vocabulary_df": label_vocabulary_df,
         "dataset_summary_df": summary_bundle["dataset_summary_df"],
         "split_summary_df": summary_bundle["split_summary_df"],

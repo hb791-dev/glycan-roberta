@@ -688,7 +688,7 @@ Purpose:
 
 Main outputs:
 - `labeled_glycans.csv`
-- `labeled_glycans_with_split.csv`
+- `prepared_classification_rows.csv`
 - `train_classification.csv`
 - `val_classification.csv`
 - `test_classification.csv`
@@ -704,9 +704,11 @@ Notes:
 - the notebook expects an accession-aware raw file in Drive because the
   subtype label source is keyed by GlyTouCan accession rather than by sequence
   text alone
-- the prepared classification dataset is expected to be smaller than the full
-  accession-aware corpus because notebook 09 keeps only glycans that have at
-  least one `GlycoMotif` / `GlycanSubtype` label in `classification.tsv`
+- `prepared_classification_rows.csv` keeps the full accession-aware corpus and
+  adds split assignments plus label JSON, including glycans that end up with no
+  surviving GlycoMotif subtype labels
+- `labeled_glycans.csv` is the smaller labeled-only subset, kept for quick
+  inspection of rows that still carry at least one subtype label
 - split assignment is done by exact sequence match so this classification
   branch stays aligned with the existing `train.txt`, `val.txt`, and `test.txt`
   files used elsewhere in the project
