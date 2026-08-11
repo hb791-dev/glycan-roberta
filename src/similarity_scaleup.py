@@ -1521,7 +1521,7 @@ def render_scaleup_index_html(
     query_html_paths: dict[str, Path],
     output_path,
     output_name: str,
-    all_vs_all_summary_row: dict,
+    all_vs_all_summary_row: dict | None,
     cartoon_lookup: dict[str, dict[str, str]],
     output_subtitle: str | None = None,
     all_vs_all_histogram_path: str | None = None,
@@ -1566,22 +1566,41 @@ def render_scaleup_index_html(
             "</div>"
         )
 
-    all_vs_all_summary_html = _format_summary_table_rows(
-        all_vs_all_summary_row,
-        ordered_fields=(
-            ("num_glycans", "Test glycans"),
-            ("count", "Unique glycan pairs"),
-            ("mean", "Mean similarity"),
-            ("median", "Median similarity"),
-            ("std_dev", "Standard deviation"),
-            ("min", "Minimum"),
-            ("q05", "5th percentile"),
-            ("q25", "25th percentile"),
-            ("q75", "75th percentile"),
-            ("q95", "95th percentile"),
-            ("max", "Maximum"),
-        ),
-    )
+    if all_vs_all_summary_row is not None:
+        all_vs_all_summary_html = _format_summary_table_rows(
+            all_vs_all_summary_row,
+            ordered_fields=(
+                ("num_glycans", "Test glycans"),
+                ("count", "Unique glycan pairs"),
+                ("mean", "Mean similarity"),
+                ("median", "Median similarity"),
+                ("std_dev", "Standard deviation"),
+                ("min", "Minimum"),
+                ("q05", "5th percentile"),
+                ("q25", "25th percentile"),
+                ("q75", "75th percentile"),
+                ("q95", "95th percentile"),
+                ("max", "Maximum"),
+            ),
+        )
+        all_vs_all_section_html = (
+            '<div class="analysis-card">'
+            "<h2>All-vs-All Summary</h2>"
+            f"{all_vs_all_summary_html}"
+            "</div>"
+        )
+    else:
+        all_vs_all_section_html = (
+            '<div class="analysis-card">'
+            "<h2>All-vs-All Summary</h2>"
+            "<p>"
+            "This run skipped the full corpus all-vs-all background to avoid the "
+            "quadratic RAM cost of building a complete similarity matrix for the "
+            "entire raw dataset. The selected-glycan reports below still compare "
+            "each query against the full corpus."
+            "</p>"
+            "</div>"
+        )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1665,10 +1684,7 @@ def render_scaleup_index_html(
   <h1>{escape(output_name)}</h1>
   {f"<p>{escape(output_subtitle)}</p>" if output_subtitle else ""}
   {all_vs_all_histogram_html}
-  <div class="analysis-card">
-    <h2>All-vs-All Summary</h2>
-    {all_vs_all_summary_html}
-  </div>
+  {all_vs_all_section_html}
   <div class="analysis-card">
     <h2>Selected Glycan Reports</h2>
     <table>
@@ -1988,10 +2004,6 @@ def export_public_scaleup_html(
 def save_scaleup_similarity_outputs(
     corpus_df,
     query_df,
-    all_vs_all_matrix_df,
-    all_vs_all_unique_pair_scores,
-    all_vs_all_summary_df,
-    all_vs_all_top_neighbors_df,
     specific_vs_all_results_df,
     specific_vs_all_summary_df,
     threshold_cloud_df,
@@ -1999,6 +2011,10 @@ def save_scaleup_similarity_outputs(
     output_dir,
     output_name: str,
     config_payload: dict,
+    all_vs_all_matrix_df=None,
+    all_vs_all_unique_pair_scores=None,
+    all_vs_all_summary_df=None,
+    all_vs_all_top_neighbors_df=None,
     output_subtitle: str | None = None,
     developer_email: str | None = None,
     cartoon_image_format: str = "svg",
@@ -2015,9 +2031,9 @@ def save_scaleup_similarity_outputs(
 
     corpus_path = output_path / "corpus_sequences.csv"
     query_path = output_path / "selected_glycans.csv"
-    all_vs_all_matrix_path = output_path / "all_vs_all_similarity_matrix.csv"
-    all_vs_all_summary_path = output_path / "all_vs_all_summary.csv"
-    all_vs_all_top_neighbors_path = output_path / "all_vs_all_top_neighbors.csv"
+    all_vs_all_matrix_path = None
+    all_vs_all_summary_path = None
+    all_vs_all_top_neighbors_path = None
     specific_results_path = output_path / "specific_vs_all_ranked.csv"
     specific_summary_path = output_path / "specific_vs_all_distribution_summary.csv"
     threshold_cloud_path = output_path / "specific_vs_all_threshold_clouds.csv"
@@ -2033,9 +2049,6 @@ def save_scaleup_similarity_outputs(
 
     corpus_df.to_csv(corpus_path, index=False)
     query_df.to_csv(query_path, index=False)
-    all_vs_all_matrix_df.to_csv(all_vs_all_matrix_path)
-    all_vs_all_summary_df.to_csv(all_vs_all_summary_path, index=False)
-    all_vs_all_top_neighbors_df.to_csv(all_vs_all_top_neighbors_path, index=False)
     specific_vs_all_results_df.to_csv(specific_results_path, index=False)
     specific_vs_all_summary_df.to_csv(specific_summary_path, index=False)
     threshold_cloud_df.to_csv(threshold_cloud_path, index=False)
@@ -2044,12 +2057,28 @@ def save_scaleup_similarity_outputs(
     with open(config_path, "w", encoding="utf-8") as file:
         json.dump(config_payload, file, indent=2)
 
-    all_vs_all_histogram_path = plot_similarity_distribution_histogram(
-        all_vs_all_unique_pair_scores,
-        histogram_dir / "all_vs_all_similarity_histogram.png",
-        "All-vs-All Similarity",
-    )
-    all_vs_all_histogram_data_uri = _image_path_to_data_uri(all_vs_all_histogram_path)
+    all_vs_all_histogram_path = None
+    all_vs_all_histogram_data_uri = None
+    all_vs_all_summary_row = None
+    if (
+        all_vs_all_matrix_df is not None
+        and all_vs_all_unique_pair_scores is not None
+        and all_vs_all_summary_df is not None
+        and all_vs_all_top_neighbors_df is not None
+    ):
+        all_vs_all_matrix_path = output_path / "all_vs_all_similarity_matrix.csv"
+        all_vs_all_summary_path = output_path / "all_vs_all_summary.csv"
+        all_vs_all_top_neighbors_path = output_path / "all_vs_all_top_neighbors.csv"
+        all_vs_all_matrix_df.to_csv(all_vs_all_matrix_path)
+        all_vs_all_summary_df.to_csv(all_vs_all_summary_path, index=False)
+        all_vs_all_top_neighbors_df.to_csv(all_vs_all_top_neighbors_path, index=False)
+        all_vs_all_summary_row = all_vs_all_summary_df.iloc[0].to_dict()
+        all_vs_all_histogram_path = plot_similarity_distribution_histogram(
+            all_vs_all_unique_pair_scores,
+            histogram_dir / "all_vs_all_similarity_histogram.png",
+            "All-vs-All Similarity",
+        )
+        all_vs_all_histogram_data_uri = _image_path_to_data_uri(all_vs_all_histogram_path)
 
     query_histogram_paths: dict[str, Path] = {}
     query_html_paths: dict[str, Path] = {}
@@ -2166,7 +2195,7 @@ def save_scaleup_similarity_outputs(
         output_path=html_dir / "index.html",
         output_name=output_name,
         output_subtitle=output_subtitle,
-        all_vs_all_summary_row=all_vs_all_summary_df.iloc[0].to_dict(),
+        all_vs_all_summary_row=all_vs_all_summary_row,
         cartoon_lookup=cartoon_lookup,
         all_vs_all_histogram_path=all_vs_all_histogram_data_uri,
     )
@@ -2212,6 +2241,7 @@ def run_scaleup_similarity_analysis(
     max_length: int | None = None,
     batch_size: int = 32,
     pooling_strategy: str = "mean",
+    include_all_vs_all: bool = True,
     all_vs_all_top_k: int = 10,
     html_neighbor_limit: int = 50,
     html_cloud_limit: int = 100,
@@ -2253,13 +2283,15 @@ def run_scaleup_similarity_analysis(
     )
     query_normalized_embeddings = query_embedding_bundle["normalized_embeddings"]
 
-    all_vs_all_artifacts = build_all_vs_all_artifacts(
-        corpus_df=cleaned_corpus_df,
-        normalized_embeddings=corpus_embedding_bundle["normalized_embeddings"],
-        accession_col=accession_col,
-        sequence_col=sequence_col,
-        top_k=all_vs_all_top_k,
-    )
+    all_vs_all_artifacts = None
+    if include_all_vs_all:
+        all_vs_all_artifacts = build_all_vs_all_artifacts(
+            corpus_df=cleaned_corpus_df,
+            normalized_embeddings=corpus_embedding_bundle["normalized_embeddings"],
+            accession_col=accession_col,
+            sequence_col=sequence_col,
+            top_k=all_vs_all_top_k,
+        )
 
     specific_vs_all_results_df = compare_queries_to_corpus(
         query_df=cleaned_query_df,
@@ -2303,6 +2335,7 @@ def run_scaleup_similarity_analysis(
         "max_length": max_length,
         "batch_size": int(batch_size),
         "pooling_strategy": normalized_pooling_strategy,
+        "include_all_vs_all": bool(include_all_vs_all),
         "all_vs_all_top_k": int(all_vs_all_top_k),
         "html_neighbor_limit": int(html_neighbor_limit),
         "html_cloud_limit": int(html_cloud_limit),
@@ -2315,10 +2348,18 @@ def run_scaleup_similarity_analysis(
             columns={accession_col: "accession", sequence_col: "sequence"}
         ),
         query_df=notebook_query_df,
-        all_vs_all_matrix_df=all_vs_all_artifacts["similarity_matrix_df"],
-        all_vs_all_unique_pair_scores=all_vs_all_artifacts["unique_pair_scores"],
-        all_vs_all_summary_df=all_vs_all_artifacts["off_diagonal_summary_df"],
-        all_vs_all_top_neighbors_df=all_vs_all_artifacts["top_neighbors_df"],
+        all_vs_all_matrix_df=(
+            all_vs_all_artifacts["similarity_matrix_df"] if all_vs_all_artifacts is not None else None
+        ),
+        all_vs_all_unique_pair_scores=(
+            all_vs_all_artifacts["unique_pair_scores"] if all_vs_all_artifacts is not None else None
+        ),
+        all_vs_all_summary_df=(
+            all_vs_all_artifacts["off_diagonal_summary_df"] if all_vs_all_artifacts is not None else None
+        ),
+        all_vs_all_top_neighbors_df=(
+            all_vs_all_artifacts["top_neighbors_df"] if all_vs_all_artifacts is not None else None
+        ),
         specific_vs_all_results_df=specific_vs_all_results_df,
         specific_vs_all_summary_df=specific_vs_all_summary_df,
         threshold_cloud_df=threshold_cloud_df,
