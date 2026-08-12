@@ -7,6 +7,8 @@ Examples include overwrite checks, shared path validation, and seed handling.
 
 from __future__ import annotations
 
+import base64
+from html import escape
 import json
 import random
 from pathlib import Path
@@ -100,3 +102,37 @@ def write_json(path: str | Path, payload: dict[str, object]) -> Path:
     path = Path(path)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
+
+
+def build_responsive_image_html(
+    image_path: str | Path,
+    *,
+    alt_text: str = "Saved plot",
+    max_width_px: int = 1100,
+) -> str:
+    """Return responsive inline HTML for one local image file.
+
+    Colab and Jupyter often render saved PNGs at their full native pixel width,
+    which can make wide plots force a horizontal scroll bar in the output area.
+    This helper embeds the image as a data URI and constrains it to the width of
+    the notebook output cell so the surrounding text does not get clipped.
+    """
+
+    image_path = require_existing_path(image_path, "Image file")
+    suffix = image_path.suffix.lower()
+    mime_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+    }.get(suffix, "application/octet-stream")
+    encoded_image = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    safe_alt_text = escape(str(alt_text), quote=True)
+    return (
+        f"<div style='max-width: {int(max_width_px)}px; width: 100%; margin: 0 0 12px;'>"
+        f"<img src='data:{mime_type};base64,{encoded_image}' "
+        f"alt='{safe_alt_text}' "
+        "style='width: 100%; height: auto; display: block;'>"
+        "</div>"
+    )

@@ -1010,13 +1010,20 @@ def _plot_confusion_matrix_grid(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, len(split_metrics_df), figsize=(5.0 * len(split_metrics_df), 4.6))
-    if len(split_metrics_df) == 1:
-        axes = [axes]
+    num_panels = len(split_metrics_df)
+    num_columns = min(2, num_panels)
+    num_rows = int(np.ceil(num_panels / num_columns))
+    fig, axes = plt.subplots(
+        num_rows,
+        num_columns,
+        figsize=(4.6 * num_columns, 4.8 * num_rows),
+        squeeze=False,
+    )
+    axes_flat = axes.ravel()
 
-    for axis, row in zip(axes, split_metrics_df.itertuples(index=False)):
+    for axis, row in zip(axes_flat, split_metrics_df.itertuples(index=False)):
         matrix = np.array([[int(row.tn), int(row.fp)], [int(row.fn), int(row.tp)]], dtype=float)
-        image = axis.imshow(matrix, cmap="Blues")
+        axis.imshow(matrix, cmap="Blues")
         for row_index in range(matrix.shape[0]):
             for column_index in range(matrix.shape[1]):
                 axis.text(
@@ -1040,9 +1047,11 @@ def _plot_confusion_matrix_grid(
         axis.set_xlabel("Predicted label")
         axis.set_ylabel("True label")
 
-    fig.colorbar(image, ax=axes, fraction=0.020, pad=0.04)
+    for axis in axes_flat[num_panels:]:
+        axis.axis("off")
+
     fig.suptitle(f"{split_name.title()} confusion matrices", fontsize=14)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(output_path, dpi=250, bbox_inches="tight")
     plt.close(fig)
     return output_path
@@ -1062,12 +1071,20 @@ def _plot_probability_histogram_grid(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, axes = plt.subplots(1, len(grouped_frames), figsize=(5.1 * len(grouped_frames), 4.6), sharey=True)
-    if len(grouped_frames) == 1:
-        axes = [axes]
+    num_panels = len(grouped_frames)
+    num_columns = min(2, num_panels)
+    num_rows = int(np.ceil(num_panels / num_columns))
+    fig, axes = plt.subplots(
+        num_rows,
+        num_columns,
+        figsize=(4.8 * num_columns, 4.6 * num_rows),
+        squeeze=False,
+        sharey=True,
+    )
+    axes_flat = axes.ravel()
 
     bins = np.linspace(0.0, 1.0, 21)
-    for axis, (model_variant, _, model_df) in zip(axes, grouped_frames):
+    for axis, (model_variant, _, model_df) in zip(axes_flat, grouped_frames):
         negative_scores = model_df.loc[model_df[TARGET_COLUMN].eq(0), "predicted_probability_n_glycan"].to_numpy(dtype=float)
         positive_scores = model_df.loc[model_df[TARGET_COLUMN].eq(1), "predicted_probability_n_glycan"].to_numpy(dtype=float)
         axis.hist(
@@ -1092,8 +1109,11 @@ def _plot_probability_histogram_grid(
         axis.grid(alpha=0.16)
         axis.legend(loc="upper center", frameon=False)
 
+    for axis in axes_flat[num_panels:]:
+        axis.axis("off")
+
     fig.suptitle(f"{split_name.title()} predicted-probability distributions", fontsize=14)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(output_path, dpi=250, bbox_inches="tight")
     plt.close(fig)
     return output_path
