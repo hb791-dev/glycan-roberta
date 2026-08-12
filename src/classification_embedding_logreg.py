@@ -35,8 +35,10 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     confusion_matrix,
     f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
+    roc_curve,
     roc_auc_score,
 )
 from sklearn.pipeline import Pipeline
@@ -52,7 +54,12 @@ from src.classification_embedding_umap import (
 )
 from src.classification_training import ACCESSION_COLUMN, LABEL_LIST_COLUMN, SEQUENCE_COLUMN, SPLIT_COLUMN
 from src.notebook_utils import require_existing_path, stringify_path_values, validate_output_paths, write_json
-from src.similarity_core import embed_sequences, load_similarity_artifacts, normalize_pooling_strategy
+from src.similarity_core import (
+    embed_sequences,
+    load_similarity_artifacts,
+    normalize_embedding_layer_index,
+    normalize_pooling_strategy,
+)
 
 
 TARGET_COLUMN = "is_n_glycan_binary"
@@ -75,12 +82,23 @@ REPORT_PATH_PREFIXES = (
     "file:///content/drive/MyDrive/",
     "file:///drive/MyDrive/",
 )
+MODEL_VARIANT_ORDER = (
+    "pretrained_mlm",
+    "classification_mlm_init",
+    "classification_random_init",
+)
+VARIANT_COLOR_LOOKUP = {
+    "pretrained_mlm": "#3b6fb6",
+    "classification_mlm_init": "#2f9e44",
+    "classification_random_init": "#c26d1a",
+}
 
 MODEL_VARIANT_LABELS = {
     "pretrained_mlm": "Pretrained MLM",
     "classification_mlm_init": "Classifier, MLM init",
     "classification_random_init": "Classifier, random init",
 }
+STANDARD_PROBE_SPLITS = ("train", "val", "test")
 
 
 def load_run_registry(registry_csv_path: str | Path) -> pd.DataFrame:
@@ -100,12 +118,7 @@ def resolve_run_registry_path(
     cleaned_registry_filename: str = "registry_cleaned_run_index.csv",
     fallback_registry_filename: str = "run_index.csv",
 ) -> Path:
-    """Resolve the run-registry CSV using the project's Drive-first layout.
-
-    Notebook 14 should prefer the cleaned audit snapshot when it exists in the
-    Drive-backed project registry folder. If that file is not available, the
-    notebook falls back to the maintained project run index.
-    """
+    """Resolve the run registry from the Drive-backed project layout first."""
     candidate_paths: list[Path] = [
         Path(drive_root) / "registry" / cleaned_registry_filename,
         Path(drive_root) / cleaned_registry_filename,
@@ -119,16 +132,16 @@ def resolve_run_registry_path(
             ]
         )
 
-    seen_paths: set[Path] = set()
     checked_paths: list[Path] = []
+    seen_paths: set[Path] = set()
     for candidate_path in candidate_paths:
-        resolved_candidate = Path(candidate_path)
-        if resolved_candidate in seen_paths:
+        normalized_path = Path(candidate_path)
+        if normalized_path in seen_paths:
             continue
-        seen_paths.add(resolved_candidate)
-        checked_paths.append(resolved_candidate)
-        if resolved_candidate.exists():
-            return resolved_candidate
+        seen_paths.add(normalized_path)
+        checked_paths.append(normalized_path)
+        if normalized_path.exists():
+            return normalized_path
 
     checked_path_text = "\n".join(f"- {path}" for path in checked_paths)
     raise FileNotFoundError(
@@ -149,6 +162,145 @@ def build_architecture_label(
 def _normalize_optional_string_list(values: Sequence[str] | None) -> list[str]:
     cleaned_values = [str(value).strip() for value in (values or []) if str(value).strip()]
     return cleaned_values
+
+
+def _normalize_run_label_candidates(values: str | Sequence[str] | None) -> list[str]:
+    """Normalize one run-label setting into a de-duplicated candidate list."""
+    if values is None:
+        return []
+    if isinstance(values, str):
+        normalized_values = [values]
+    else:
+        normalized_values = list(values)
+
+    cleaned_values: list[str] = []
+    for value in normalized_values:
+        cleaned_value = str(value).strip()
+        if not cleaned_value or cleaned_value in cleaned_values:
+            continue
+        cleaned_values.append(cleaned_value)
+    return cleaned_values
+
+
+def _build_classification_variant_model_dir(
+    *,
+    checkpoints_dir: str | Path,
+    tokenizer_family: str,
+    experiment_name: str,
+    model_variant: str,
+    classifier_run_label: str,
+    model_subdir: str,
+) -> Path:
+    """Build one classification-model directory candidate for label resolution."""
+    return resolve_embedding_model_dir(
+        checkpoints_dir=checkpoints_dir,
+        tokenizer_family=tokenizer_family,
+        experiment_name=experiment_name,
+        model_variant=model_variant,
+        classifier_mlm_run_label=classifier_run_label,
+        classifier_random_run_label=classifier_run_label,
+        model_subdir=model_subdir,
+    )
+
+
+def _resolve_one_classifier_run_label(
+    *,
+    checkpoints_dir: str | Path,
+    tokenizer_family: str,
+    experiment_name: str,
+    model_variant: str,
+    run_label_candidates: str | Sequence[str] | None,
+    model_subdir: str = "best_model",
+) -> dict[str, Any]:
+    """Resolve one classifier run label by checking a list of saved-folder candidates."""
+    candidate_labels = _normalize_run_label_candidates(run_label_candidates)
+    if not candidate_labels:
+        raise ValueError(f"At least one run-label candidate is required for {model_variant}.")
+
+    candidate_rows: list[dict[str, Any]] = []
+    for run_label in candidate_labels:
+        model_dir = _build_classification_variant_model_dir(
+            checkpoints_dir=checkpoints_dir,
+            tokenizer_family=tokenizer_family,
+            experiment_name=experiment_name,
+            model_variant=model_variant,
+            classifier_run_label=run_label,
+            model_subdir=model_subdir,
+        )
+        candidate_rows.append(
+            {
+                "model_variant": model_variant,
+                "candidate_run_label": run_label,
+                "candidate_model_dir": str(model_dir),
+                "candidate_exists": bool(model_dir.exists()),
+            }
+        )
+
+    selected_row = next((row for row in candidate_rows if row["candidate_exists"]), candidate_rows[0])
+    selection_status = "matched_existing_candidate" if selected_row["candidate_exists"] else "no_candidate_exists"
+    return {
+        "model_variant": model_variant,
+        "selected_run_label": str(selected_row["candidate_run_label"]),
+        "selected_model_dir": str(selected_row["candidate_model_dir"]),
+        "selected_model_dir_exists": bool(selected_row["candidate_exists"]),
+        "selection_status": selection_status,
+        "candidate_rows": candidate_rows,
+    }
+
+
+def resolve_classifier_run_label_choices(
+    *,
+    checkpoints_dir: str | Path,
+    tokenizer_family: str,
+    experiment_name: str,
+    classifier_mlm_run_label_candidates: str | Sequence[str] | None,
+    classifier_random_run_label_candidates: str | Sequence[str] | None,
+    model_subdir: str = "best_model",
+) -> dict[str, dict[str, Any]]:
+    """Resolve both classifier-state run labels using Drive folder existence."""
+    return {
+        "classification_mlm_init": _resolve_one_classifier_run_label(
+            checkpoints_dir=checkpoints_dir,
+            tokenizer_family=tokenizer_family,
+            experiment_name=experiment_name,
+            model_variant="classification_mlm_init",
+            run_label_candidates=classifier_mlm_run_label_candidates,
+            model_subdir=model_subdir,
+        ),
+        "classification_random_init": _resolve_one_classifier_run_label(
+            checkpoints_dir=checkpoints_dir,
+            tokenizer_family=tokenizer_family,
+            experiment_name=experiment_name,
+            model_variant="classification_random_init",
+            run_label_candidates=classifier_random_run_label_candidates,
+            model_subdir=model_subdir,
+        ),
+    }
+
+
+def build_classifier_run_label_resolution_table(
+    resolution_map: Mapping[str, Mapping[str, Any]],
+) -> pd.DataFrame:
+    """Flatten the classifier run-label resolution map for notebook display."""
+    table_rows: list[dict[str, Any]] = []
+    for model_variant in MODEL_VARIANT_ORDER:
+        if model_variant not in resolution_map:
+            continue
+        resolution = resolution_map[model_variant]
+        table_rows.append(
+            {
+                "model_variant": model_variant,
+                "variant_label": MODEL_VARIANT_LABELS.get(model_variant, model_variant),
+                "selected_run_label": resolution.get("selected_run_label", ""),
+                "selected_model_dir_exists": bool(resolution.get("selected_model_dir_exists", False)),
+                "selection_status": resolution.get("selection_status", ""),
+                "candidate_run_labels": " | ".join(
+                    str(row.get("candidate_run_label", ""))
+                    for row in resolution.get("candidate_rows", [])
+                ),
+            }
+        )
+    return pd.DataFrame(table_rows)
 
 
 def _filter_registry_runs(
@@ -294,6 +446,7 @@ def build_embedding_logreg_output_paths(
         "run_manifest_path": results_dir / "run_manifest.csv",
         "skipped_runs_path": results_dir / "skipped_runs.csv",
         "target_summary_path": results_dir / "target_summary.csv",
+        "class_summary_path": results_dir / "class_summary.csv",
         "split_metrics_path": results_dir / "split_metrics.csv",
         "train_summary_path": results_dir / "train_summary.csv",
         "val_summary_path": results_dir / "val_summary.csv",
@@ -301,6 +454,14 @@ def build_embedding_logreg_output_paths(
         "train_plot_path": results_dir / "train_metric_grid.png",
         "val_plot_path": results_dir / "val_metric_grid.png",
         "test_plot_path": results_dir / "test_metric_grid.png",
+        "val_roc_plot_path": results_dir / "val_roc_curve.png",
+        "test_roc_plot_path": results_dir / "test_roc_curve.png",
+        "val_pr_plot_path": results_dir / "val_precision_recall_curve.png",
+        "test_pr_plot_path": results_dir / "test_precision_recall_curve.png",
+        "val_confusion_plot_path": results_dir / "val_confusion_matrix_grid.png",
+        "test_confusion_plot_path": results_dir / "test_confusion_matrix_grid.png",
+        "val_probability_plot_path": results_dir / "val_probability_histogram_grid.png",
+        "test_probability_plot_path": results_dir / "test_probability_histogram_grid.png",
         "html_report_path": results_dir / "n_glycan_logistic_regression_report.html",
     }
 
@@ -381,6 +542,7 @@ def build_embedding_logreg_run_config(
     classification_prep_dir: str | Path,
     checkpoints_dir: str | Path,
     pooling_strategy: str,
+    embedding_layer_index: int,
     splits_to_include: Sequence[str],
     train_splits: Sequence[str],
     evaluation_splits: Sequence[str],
@@ -402,6 +564,7 @@ def build_embedding_logreg_run_config(
         "classification_prep_dir": str(classification_prep_dir),
         "checkpoints_dir": str(checkpoints_dir),
         "pooling_strategy": str(pooling_strategy),
+        "embedding_layer_index": int(embedding_layer_index),
         "splits_to_include": [str(split_name) for split_name in splits_to_include],
         "train_splits": [str(split_name) for split_name in train_splits],
         "evaluation_splits": [str(split_name) for split_name in evaluation_splits],
@@ -479,11 +642,26 @@ def build_run_manifest(
     return pd.DataFrame(manifest_rows)
 
 
+def _build_per_run_output_paths(
+    per_run_dir: str | Path,
+    run_spec: Mapping[str, Any],
+) -> dict[str, Path]:
+    """Return the standard saved files for one compared model state."""
+    run_dir = Path(per_run_dir) / build_run_slug(run_spec)
+    return {
+        "run_dir": run_dir,
+        "metrics_path": run_dir / "split_metrics.csv",
+        "predictions_path": run_dir / "prediction_table.csv",
+        "config_path": run_dir / "run_spec.json",
+    }
+
+
 def _build_row_embedding_matrix(
     annotated_df: pd.DataFrame,
     *,
     model_dir: str | Path,
     pooling_strategy: str,
+    embedding_layer_index: int,
     batch_size: int,
     max_length: int | None,
     device: str | None = None,
@@ -491,6 +669,7 @@ def _build_row_embedding_matrix(
     """Embed the unique sequences once, then map them back to dataframe rows."""
     model_dir = require_existing_path(model_dir, "Embedding model directory")
     normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
+    normalized_embedding_layer_index = normalize_embedding_layer_index(embedding_layer_index)
 
     sequence_series = annotated_df[SEQUENCE_COLUMN].fillna("").map(str).map(str.strip)
     if sequence_series.eq("").any():
@@ -510,6 +689,7 @@ def _build_row_embedding_matrix(
             max_length=max_length,
             batch_size=batch_size,
             pooling_strategy=normalized_pooling_strategy,
+            embedding_layer_index=normalized_embedding_layer_index,
         )
         # Normalize once here so the downstream probe compares model states from
         # the same cosine-style embedding scale.
@@ -639,23 +819,15 @@ def _save_per_run_outputs(
     prediction_df: pd.DataFrame,
 ) -> dict[str, Path]:
     """Save one run's metrics and prediction tables."""
-    run_dir = Path(per_run_dir) / build_run_slug(run_spec)
+    per_run_paths = _build_per_run_output_paths(per_run_dir, run_spec)
+    run_dir = per_run_paths["run_dir"]
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    metrics_path = run_dir / "split_metrics.csv"
-    predictions_path = run_dir / "prediction_table.csv"
-    config_path = run_dir / "run_spec.json"
+    metrics_df.to_csv(per_run_paths["metrics_path"], index=False)
+    prediction_df.to_csv(per_run_paths["predictions_path"], index=False)
+    write_json(per_run_paths["config_path"], stringify_path_values(dict(run_spec)))
 
-    metrics_df.to_csv(metrics_path, index=False)
-    prediction_df.to_csv(predictions_path, index=False)
-    write_json(config_path, stringify_path_values(dict(run_spec)))
-
-    return {
-        "run_dir": run_dir,
-        "metrics_path": metrics_path,
-        "predictions_path": predictions_path,
-        "config_path": config_path,
-    }
+    return per_run_paths
 
 
 def _plot_metric_grid(
@@ -670,16 +842,13 @@ def _plot_metric_grid(
     if plot_df.empty:
         raise ValueError(f"No metric rows were found for split {split_name!r}.")
 
-    ordered_variant_labels = list(MODEL_VARIANT_LABELS.values())
-    variant_color_lookup = {
-        ordered_variant_labels[0]: "#3b6fb6",
-        ordered_variant_labels[1]: "#2f9e44",
-        ordered_variant_labels[2]: "#c26d1a",
-    }
+    plot_df["variant_order"] = plot_df["model_variant"].map(
+        lambda value: MODEL_VARIANT_ORDER.index(value) if value in MODEL_VARIANT_ORDER else len(MODEL_VARIANT_ORDER)
+    )
     plot_df["variant_label"] = plot_df["model_variant"].map(MODEL_VARIANT_LABELS).fillna(plot_df["model_variant"])
-    plot_df["plot_color"] = plot_df["variant_label"].map(variant_color_lookup).fillna("#666666")
+    plot_df["plot_color"] = plot_df["model_variant"].map(VARIANT_COLOR_LOOKUP).fillna("#666666")
     plot_df = plot_df.sort_values(
-        ["tokenizer_family", "num_hidden_layers", "hidden_size", "attention_heads", "model_variant"],
+        ["variant_order", "tokenizer_family", "num_hidden_layers", "hidden_size", "attention_heads", "model_variant"],
         kind="stable",
     ).reset_index(drop=True)
 
@@ -709,11 +878,297 @@ def _plot_metric_grid(
     return output_path
 
 
+def _iter_split_prediction_groups(
+    prediction_df: pd.DataFrame,
+    split_name: str,
+) -> list[tuple[str, str, pd.DataFrame]]:
+    """Return split-filtered prediction groups ordered by model state."""
+    split_df = prediction_df.loc[prediction_df["split"] == str(split_name)].copy()
+    if split_df.empty:
+        return []
+
+    grouped_frames: list[tuple[str, str, pd.DataFrame]] = []
+    for model_variant in MODEL_VARIANT_ORDER:
+        model_df = split_df.loc[split_df["model_variant"] == model_variant].copy()
+        if model_df.empty:
+            continue
+        display_label = str(model_df["display_label"].iloc[0])
+        grouped_frames.append((model_variant, display_label, model_df.reset_index(drop=True)))
+    return grouped_frames
+
+
+def _plot_roc_curve_comparison(
+    prediction_df: pd.DataFrame,
+    *,
+    split_name: str,
+    output_path: str | Path,
+) -> Path | None:
+    """Save one split-level ROC comparison across available model states."""
+    grouped_frames = _iter_split_prediction_groups(prediction_df, split_name)
+    valid_groups = [
+        (model_variant, display_label, model_df)
+        for model_variant, display_label, model_df in grouped_frames
+        if model_df[TARGET_COLUMN].nunique() >= 2
+    ]
+    if not valid_groups:
+        return None
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axis = plt.subplots(figsize=(8, 6))
+
+    for model_variant, display_label, model_df in valid_groups:
+        target_values = model_df[TARGET_COLUMN].to_numpy(dtype=int)
+        predicted_probabilities = model_df["predicted_probability_n_glycan"].to_numpy(dtype=float)
+        fpr, tpr, _ = roc_curve(target_values, predicted_probabilities)
+        auc_value = _safe_metric(roc_auc_score, target_values, predicted_probabilities)
+        axis.plot(
+            fpr,
+            tpr,
+            linewidth=2.2,
+            color=VARIANT_COLOR_LOOKUP.get(model_variant, "#666666"),
+            label=f"{MODEL_VARIANT_LABELS.get(model_variant, display_label)} (AUC {auc_value:.3f})",
+        )
+
+    axis.plot([0, 1], [0, 1], linestyle="--", color="#8a8f98", linewidth=1.2, label="Chance")
+    axis.set_title(f"{split_name.title()} ROC comparison")
+    axis.set_xlabel("False positive rate")
+    axis.set_ylabel("True positive rate")
+    axis.set_xlim(0.0, 1.0)
+    axis.set_ylim(0.0, 1.0)
+    axis.grid(alpha=0.20)
+    axis.legend(loc="lower right", frameon=False)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def _plot_precision_recall_comparison(
+    prediction_df: pd.DataFrame,
+    *,
+    split_name: str,
+    output_path: str | Path,
+) -> Path | None:
+    """Save one split-level precision-recall comparison across model states."""
+    grouped_frames = _iter_split_prediction_groups(prediction_df, split_name)
+    valid_groups = [
+        (model_variant, display_label, model_df)
+        for model_variant, display_label, model_df in grouped_frames
+        if model_df[TARGET_COLUMN].nunique() >= 2
+    ]
+    if not valid_groups:
+        return None
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axis = plt.subplots(figsize=(8, 6))
+
+    for model_variant, display_label, model_df in valid_groups:
+        target_values = model_df[TARGET_COLUMN].to_numpy(dtype=int)
+        predicted_probabilities = model_df["predicted_probability_n_glycan"].to_numpy(dtype=float)
+        precision_values, recall_values, _ = precision_recall_curve(target_values, predicted_probabilities)
+        ap_value = _safe_metric(average_precision_score, target_values, predicted_probabilities)
+        axis.plot(
+            recall_values,
+            precision_values,
+            linewidth=2.2,
+            color=VARIANT_COLOR_LOOKUP.get(model_variant, "#666666"),
+            label=f"{MODEL_VARIANT_LABELS.get(model_variant, display_label)} (AP {ap_value:.3f})",
+        )
+
+    baseline_rate = float(valid_groups[0][2][TARGET_COLUMN].mean())
+    axis.axhline(baseline_rate, linestyle="--", color="#8a8f98", linewidth=1.2, label="Positive-rate baseline")
+    axis.set_title(f"{split_name.title()} precision-recall comparison")
+    axis.set_xlabel("Recall")
+    axis.set_ylabel("Precision")
+    axis.set_xlim(0.0, 1.0)
+    axis.set_ylim(0.0, 1.0)
+    axis.grid(alpha=0.20)
+    axis.legend(loc="lower left", frameon=False)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def _plot_confusion_matrix_grid(
+    metrics_df: pd.DataFrame,
+    *,
+    split_name: str,
+    output_path: str | Path,
+) -> Path | None:
+    """Save one confusion-matrix grid that compares available model states."""
+    split_metrics_df = metrics_df.loc[metrics_df["split"] == str(split_name)].copy()
+    if split_metrics_df.empty:
+        return None
+
+    split_metrics_df["variant_order"] = split_metrics_df["model_variant"].map(
+        lambda value: MODEL_VARIANT_ORDER.index(value) if value in MODEL_VARIANT_ORDER else len(MODEL_VARIANT_ORDER)
+    )
+    split_metrics_df = split_metrics_df.sort_values(["variant_order", "display_label"], kind="stable").reset_index(drop=True)
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, len(split_metrics_df), figsize=(5.0 * len(split_metrics_df), 4.6))
+    if len(split_metrics_df) == 1:
+        axes = [axes]
+
+    for axis, row in zip(axes, split_metrics_df.itertuples(index=False)):
+        matrix = np.array([[int(row.tn), int(row.fp)], [int(row.fn), int(row.tp)]], dtype=float)
+        image = axis.imshow(matrix, cmap="Blues")
+        for row_index in range(matrix.shape[0]):
+            for column_index in range(matrix.shape[1]):
+                axis.text(
+                    column_index,
+                    row_index,
+                    f"{int(matrix[row_index, column_index])}",
+                    ha="center",
+                    va="center",
+                    color="#0f172a",
+                    fontsize=11,
+                    fontweight="bold",
+                )
+        axis.set_xticks([0, 1])
+        axis.set_xticklabels(["Pred 0", "Pred 1"])
+        axis.set_yticks([0, 1])
+        axis.set_yticklabels(["True 0", "True 1"])
+        axis.set_title(
+            f"{MODEL_VARIANT_LABELS.get(row.model_variant, row.model_variant)}\n"
+            f"Acc {float(row.accuracy):.3f} | F1 {float(row.f1):.3f}"
+        )
+        axis.set_xlabel("Predicted label")
+        axis.set_ylabel("True label")
+
+    fig.colorbar(image, ax=axes, fraction=0.020, pad=0.04)
+    fig.suptitle(f"{split_name.title()} confusion matrices", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def _plot_probability_histogram_grid(
+    prediction_df: pd.DataFrame,
+    *,
+    split_name: str,
+    output_path: str | Path,
+    probability_threshold: float,
+) -> Path | None:
+    """Save one grid of probability histograms split by true class."""
+    grouped_frames = _iter_split_prediction_groups(prediction_df, split_name)
+    if not grouped_frames:
+        return None
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(1, len(grouped_frames), figsize=(5.1 * len(grouped_frames), 4.6), sharey=True)
+    if len(grouped_frames) == 1:
+        axes = [axes]
+
+    bins = np.linspace(0.0, 1.0, 21)
+    for axis, (model_variant, _, model_df) in zip(axes, grouped_frames):
+        negative_scores = model_df.loc[model_df[TARGET_COLUMN].eq(0), "predicted_probability_n_glycan"].to_numpy(dtype=float)
+        positive_scores = model_df.loc[model_df[TARGET_COLUMN].eq(1), "predicted_probability_n_glycan"].to_numpy(dtype=float)
+        axis.hist(
+            negative_scores,
+            bins=bins,
+            alpha=0.70,
+            color="#8da0b3",
+            label="True 0",
+        )
+        axis.hist(
+            positive_scores,
+            bins=bins,
+            alpha=0.70,
+            color=VARIANT_COLOR_LOOKUP.get(model_variant, "#666666"),
+            label="True 1",
+        )
+        axis.axvline(float(probability_threshold), linestyle="--", color="#111827", linewidth=1.2)
+        axis.set_title(MODEL_VARIANT_LABELS.get(model_variant, model_variant))
+        axis.set_xlabel("Predicted probability of N-glycan")
+        axis.set_ylabel("Row count")
+        axis.set_xlim(0.0, 1.0)
+        axis.grid(alpha=0.16)
+        axis.legend(loc="upper center", frameon=False)
+
+    fig.suptitle(f"{split_name.title()} predicted-probability distributions", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 def _render_dataframe_html(frame_df: pd.DataFrame) -> str:
     """Render one dataframe as a compact HTML table for saved reports."""
     if frame_df.empty:
         return "<p class='subtle'>No rows were available for this section.</p>"
     return frame_df.to_html(index=False, classes="report-table", border=0)
+
+
+def _select_existing_columns(frame_df: pd.DataFrame, candidate_columns: Sequence[str]) -> pd.DataFrame:
+    """Return one dataframe restricted to the requested columns when present."""
+    selected_columns = [column for column in candidate_columns if column in frame_df.columns]
+    if not selected_columns:
+        return frame_df.copy()
+    return frame_df.loc[:, selected_columns].copy()
+
+
+def _build_public_manifest_table(manifest_df: pd.DataFrame) -> pd.DataFrame:
+    """Return one public-safe manifest table without local filesystem paths."""
+    return _select_existing_columns(
+        manifest_df,
+        [
+            "display_label",
+            "model_variant",
+            "model_dir_exists",
+            "registry_run_status",
+        ],
+    )
+
+
+def _build_public_metric_summary_table(summary_df: pd.DataFrame) -> pd.DataFrame:
+    """Return one public-safe split summary without local filesystem paths."""
+    return _select_existing_columns(
+        summary_df,
+        [
+            "display_label",
+            "model_variant",
+            "row_count",
+            "positive_count",
+            "roc_auc",
+            "average_precision",
+            "f1",
+            "balanced_accuracy",
+            "accuracy",
+        ],
+    )
+
+
+def _build_public_skipped_table(skipped_df: pd.DataFrame) -> pd.DataFrame:
+    """Return one public-safe skipped-run table without local filesystem paths."""
+    return _select_existing_columns(
+        skipped_df,
+        [
+            "display_label",
+            "model_variant",
+            "reason",
+        ],
+    )
+
+
+def _build_public_copied_files_table(copied_files_df: pd.DataFrame) -> pd.DataFrame:
+    """Return a compact export-audit table without local absolute paths."""
+    public_df = _select_existing_columns(
+        copied_files_df,
+        [
+            "relative_path",
+            "file_type",
+        ],
+    )
+    if "relative_path" in public_df.columns:
+        public_df = public_df.sort_values("relative_path", kind="stable").reset_index(drop=True)
+    return public_df
 
 
 def _render_plot_card(
@@ -765,17 +1220,32 @@ def render_embedding_logreg_html_report(
     test_summary_df: pd.DataFrame,
     skipped_df: pd.DataFrame,
     plot_paths: Mapping[str, Path],
+    diagnostic_plot_paths: Mapping[str, Path | None],
 ) -> Path:
     """Render a saved HTML report for one notebook-14 comparison run."""
     output_dir = Path(output_dir)
     html_path = output_dir / "n_glycan_logistic_regression_report.html"
+    combined_summary_df = pd.concat(
+        [train_summary_df, val_summary_df, test_summary_df],
+        ignore_index=True,
+    )
+    completed_run_count = (
+        int(combined_summary_df["display_label"].nunique())
+        if "display_label" in combined_summary_df.columns
+        else 0
+    )
 
     summary_cards = [
         ("Requested runs", len(manifest_df)),
         ("Existing model dirs", int(manifest_df["model_dir_exists"].sum()) if "model_dir_exists" in manifest_df else 0),
-        ("Completed runs", len(test_summary_df)),
+        ("Completed runs", completed_run_count),
         ("Skipped runs", len(skipped_df)),
     ]
+    public_manifest_df = _build_public_manifest_table(manifest_df)
+    public_train_summary_df = _build_public_metric_summary_table(train_summary_df)
+    public_val_summary_df = _build_public_metric_summary_table(val_summary_df)
+    public_test_summary_df = _build_public_metric_summary_table(test_summary_df)
+    public_skipped_df = _build_public_skipped_table(skipped_df)
     summary_cards_html = "".join(
         (
             "<div class='card'>"
@@ -785,13 +1255,80 @@ def render_embedding_logreg_html_report(
         )
         for label, value in summary_cards
     )
-    plot_cards_html = "".join(
+    metric_grid_cards_html = "".join(
         [
             _render_plot_card(plot_paths.get("train"), report_dir=output_dir, title="Train metric grid"),
             _render_plot_card(plot_paths.get("val"), report_dir=output_dir, title="Validation metric grid"),
             _render_plot_card(plot_paths.get("test"), report_dir=output_dir, title="Test metric grid"),
         ]
     )
+    skipped_callout_html = ""
+    if not public_skipped_df.empty:
+        skipped_callout_html = (
+            "<section class='callout warn'>"
+            "<h2>Checkpoint warning</h2>"
+            "<p>At least one requested model state did not resolve to a saved checkpoint folder. "
+            "That state is excluded from the comparison plots below.</p>"
+            f"<div class='table-wrap'>{_render_dataframe_html(public_skipped_df)}</div>"
+            "</section>"
+        )
+
+    split_diagnostic_sections: list[str] = []
+    for split_key, split_heading in (("val", "Validation"), ("test", "Test")):
+        split_plot_keys = (
+            f"{split_key}_roc",
+            f"{split_key}_pr",
+            f"{split_key}_confusion",
+            f"{split_key}_probability",
+        )
+        if not any(diagnostic_plot_paths.get(plot_key) for plot_key in split_plot_keys):
+            continue
+        split_cards = "".join(
+            [
+                _render_plot_card(
+                    diagnostic_plot_paths.get(f"{split_key}_roc"),
+                    report_dir=output_dir,
+                    title=f"{split_heading} ROC curve",
+                ),
+                _render_plot_card(
+                    diagnostic_plot_paths.get(f"{split_key}_pr"),
+                    report_dir=output_dir,
+                    title=f"{split_heading} precision-recall curve",
+                ),
+                _render_plot_card(
+                    diagnostic_plot_paths.get(f"{split_key}_confusion"),
+                    report_dir=output_dir,
+                    title=f"{split_heading} confusion matrices",
+                ),
+                _render_plot_card(
+                    diagnostic_plot_paths.get(f"{split_key}_probability"),
+                    report_dir=output_dir,
+                    title=f"{split_heading} probability distributions",
+                ),
+            ]
+        )
+        split_diagnostic_sections.append(
+            "<section>"
+            f"<h2>{split_heading} logistic-regression diagnostics</h2>"
+            "<p class='subtle'>These plots show the actual classifier behavior, not just summary scores.</p>"
+            f"<div class='plot-grid diagnostics-grid'>{split_cards}</div>"
+            "</section>"
+        )
+
+    summary_section_html_parts: list[str] = []
+    for section_title, summary_df in (
+        ("Train summary", public_train_summary_df),
+        ("Validation summary", public_val_summary_df),
+        ("Test summary", public_test_summary_df),
+    ):
+        if summary_df.empty:
+            continue
+        summary_section_html_parts.append(
+            "<section>"
+            f"<h2>{section_title}</h2>"
+            f"<div class='table-wrap'>{_render_dataframe_html(summary_df)}</div>"
+            "</section>"
+        )
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -801,32 +1338,43 @@ def render_embedding_logreg_html_report(
   <title>{escape(report_title)}</title>
   <style>
     :root {{
-      --ink: #1f2933;
-      --muted: #52606d;
-      --paper: #f6f2e8;
-      --card: #fffaf1;
-      --line: #d8cfbf;
-      --accent: #9f4c24;
+      --ink: #16202a;
+      --muted: #5b6674;
+      --paper: #eef3f7;
+      --card: #ffffff;
+      --line: #d6dee7;
+      --accent: #1f4f82;
+      --accent-soft: #eaf2fb;
+      --warn: #9a4f17;
+      --warn-soft: #fff3e6;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       color: var(--ink);
-      background: linear-gradient(180deg, #fbf7ef 0%, var(--paper) 100%);
-      font-family: Georgia, "Times New Roman", serif;
-      line-height: 1.5;
+      background:
+        radial-gradient(circle at top left, #ffffff 0%, rgba(255, 255, 255, 0) 32%),
+        linear-gradient(180deg, #f7fafc 0%, var(--paper) 100%);
+      font-family: "Aptos", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.58;
     }}
     header {{
-      padding: 34px 42px 20px;
+      padding: 34px 42px 24px;
       border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(10px);
     }}
-    h1, h2, h3 {{ line-height: 1.15; }}
-    h1 {{ margin: 0 0 8px; font-size: 32px; }}
+    h1, h2, h3 {{ line-height: 1.12; }}
+    h1 {{ margin: 0 0 8px; font-size: 34px; }}
     h2 {{ margin: 30px 0 12px; font-size: 24px; }}
     h3 {{ margin: 0 0 8px; font-size: 18px; }}
     p {{ margin: 0 0 12px; }}
     .subtle {{ color: var(--muted); }}
-    .container {{ padding: 24px 42px 52px; }}
+    .container {{
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 26px 40px 56px;
+    }}
     .summary-grid, .plot-grid {{
       display: grid;
       gap: 16px;
@@ -837,11 +1385,14 @@ def render_embedding_logreg_html_report(
     .plot-grid {{
       grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     }}
+    .diagnostics-grid {{
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    }}
     .card, .plot-card {{
-      background: rgba(255, 250, 241, 0.96);
+      background: rgba(255, 255, 255, 0.97);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      box-shadow: 0 10px 28px rgba(74, 57, 35, 0.08);
+      border-radius: 20px;
+      box-shadow: 0 14px 36px rgba(27, 39, 51, 0.08);
     }}
     .card {{
       padding: 16px;
@@ -854,6 +1405,18 @@ def render_embedding_logreg_html_report(
       color: var(--accent);
       font-size: 28px;
       font-weight: bold;
+    }}
+    .callout {{
+      margin-top: 24px;
+      padding: 18px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: var(--accent-soft);
+      box-shadow: 0 14px 36px rgba(27, 39, 51, 0.06);
+    }}
+    .callout.warn {{
+      background: var(--warn-soft);
+      border-color: #f0c89c;
     }}
     .plot-card a {{
       display: block;
@@ -870,32 +1433,32 @@ def render_embedding_logreg_html_report(
     }}
     .table-wrap {{
       overflow-x: auto;
-      background: rgba(255, 250, 241, 0.96);
+      background: rgba(255, 255, 255, 0.97);
       border: 1px solid var(--line);
-      border-radius: 18px;
-      box-shadow: 0 10px 28px rgba(74, 57, 35, 0.08);
+      border-radius: 20px;
+      box-shadow: 0 14px 36px rgba(27, 39, 51, 0.08);
       padding: 12px;
     }}
     table.report-table {{
       width: 100%;
       border-collapse: collapse;
-      font-size: 14px;
+      font-size: 13px;
       background: white;
     }}
     table.report-table th,
     table.report-table td {{
       padding: 8px 10px;
-      border-bottom: 1px solid #ece6d9;
+      border-bottom: 1px solid #e6edf5;
       text-align: left;
       vertical-align: top;
     }}
     table.report-table th {{
-      background: #f5efe1;
+      background: #f2f6fa;
       position: sticky;
       top: 0;
     }}
     code {{
-      background: #f2ebdc;
+      background: #edf3f9;
       padding: 2px 5px;
       border-radius: 6px;
       font-size: 0.95em;
@@ -916,11 +1479,12 @@ def render_embedding_logreg_html_report(
       <div class="summary-grid">{summary_cards_html}</div>
     </section>
     <section>
-      <h2>Requested runs</h2>
-      <div class="table-wrap">{_render_dataframe_html(manifest_df)}</div>
+      <h2>Requested model states</h2>
+      <div class="table-wrap">{_render_dataframe_html(public_manifest_df)}</div>
     </section>
+    {skipped_callout_html}
     <section>
-      <h2>Binary target counts</h2>
+      <h2>Target balance</h2>
       <p class="subtle">Unlabeled rows remain in the negative class when the notebook keeps them.</p>
       <div class="table-wrap">{_render_dataframe_html(target_summary_df)}</div>
     </section>
@@ -929,25 +1493,12 @@ def render_embedding_logreg_html_report(
       <div class="table-wrap">{_render_dataframe_html(class_summary_df)}</div>
     </section>
     <section>
-      <h2>Saved metric plots</h2>
-      <div class="plot-grid">{plot_cards_html}</div>
+      <h2>Metric ranking grids</h2>
+      <p class="subtle">These summarize score rankings across model states for each split.</p>
+      <div class="plot-grid">{metric_grid_cards_html}</div>
     </section>
-    <section>
-      <h2>Train summary</h2>
-      <div class="table-wrap">{_render_dataframe_html(train_summary_df)}</div>
-    </section>
-    <section>
-      <h2>Validation summary</h2>
-      <div class="table-wrap">{_render_dataframe_html(val_summary_df)}</div>
-    </section>
-    <section>
-      <h2>Test summary</h2>
-      <div class="table-wrap">{_render_dataframe_html(test_summary_df)}</div>
-    </section>
-    <section>
-      <h2>Skipped runs</h2>
-      <div class="table-wrap">{_render_dataframe_html(skipped_df)}</div>
-    </section>
+    {''.join(split_diagnostic_sections)}
+    {''.join(summary_section_html_parts)}
   </main>
 </body>
 </html>
@@ -1060,8 +1611,7 @@ def export_public_embedding_logreg_html(
         copied_file_rows.append(
             {
                 "relative_path": relative_key,
-                "source_path": str(source_path),
-                "export_path": str(target_path),
+                "file_type": source_path.suffix.lower().lstrip(".") or "no_suffix",
             }
         )
 
@@ -1102,7 +1652,7 @@ def export_public_embedding_logreg_html(
                     }
                 )
 
-    copied_files_df = pd.DataFrame(copied_file_rows)
+    copied_files_df = _build_public_copied_files_table(pd.DataFrame(copied_file_rows))
     dependency_issues_df = pd.DataFrame(dependency_issue_rows)
     scan_results_df = pd.DataFrame(scan_rows)
 
@@ -1143,6 +1693,42 @@ def build_metric_split_summary(metrics_df: pd.DataFrame, split_name: str) -> pd.
     return summary_df
 
 
+def validate_probe_split_configuration(
+    *,
+    train_splits: Sequence[str],
+    evaluation_splits: Sequence[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Validate notebook-14 split settings against the standard project layout.
+
+    Notebook 14 is intentionally built around the project's fixed
+    ``train``/``val``/``test`` split names so the saved report layout stays
+    predictable and consistent with the rest of the workflow.
+    """
+    normalized_train_splits = tuple(str(split_name).strip() for split_name in train_splits if str(split_name).strip())
+    normalized_evaluation_splits = tuple(
+        str(split_name).strip() for split_name in evaluation_splits if str(split_name).strip()
+    )
+    if not normalized_train_splits:
+        raise ValueError("At least one train split is required for notebook 14.")
+    if not normalized_evaluation_splits:
+        raise ValueError("At least one evaluation split is required for notebook 14.")
+
+    invalid_train_splits = sorted(set(normalized_train_splits).difference(STANDARD_PROBE_SPLITS))
+    invalid_evaluation_splits = sorted(set(normalized_evaluation_splits).difference(STANDARD_PROBE_SPLITS))
+    if invalid_train_splits or invalid_evaluation_splits:
+        raise ValueError(
+            "Notebook 14 expects the standard project split names only. "
+            f"Supported splits: {STANDARD_PROBE_SPLITS}. "
+            f"Invalid train_splits: {invalid_train_splits or 'none'}. "
+            f"Invalid evaluation_splits: {invalid_evaluation_splits or 'none'}."
+        )
+
+    if any(split_name not in normalized_evaluation_splits for split_name in normalized_train_splits):
+        raise ValueError("Every train split must also appear in evaluation_splits for notebook 14.")
+
+    return normalized_train_splits, normalized_evaluation_splits
+
+
 def run_embedding_logreg_suite(
     *,
     annotated_df: pd.DataFrame,
@@ -1150,6 +1736,7 @@ def run_embedding_logreg_suite(
     checkpoints_dir: str | Path,
     output_paths: Mapping[str, Path],
     pooling_strategy: str = "mean",
+    embedding_layer_index: int = -1,
     batch_size: int = 32,
     max_length: int | None = None,
     train_splits: Sequence[str] = ("train",),
@@ -1168,36 +1755,60 @@ def run_embedding_logreg_suite(
 ) -> dict[str, Any]:
     """Run the notebook-14 embedding comparison end to end."""
     normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
+    normalized_embedding_layer_index = normalize_embedding_layer_index(embedding_layer_index)
+    train_splits, evaluation_splits = validate_probe_split_configuration(
+        train_splits=train_splits,
+        evaluation_splits=evaluation_splits,
+    )
     output_paths = {key: Path(value) for key, value in output_paths.items()}
     output_paths["per_run_dir"].mkdir(parents=True, exist_ok=True)
+    manifest_df = build_run_manifest(
+        run_specs=run_specs,
+        checkpoints_dir=checkpoints_dir,
+        model_subdir=model_subdir,
+    )
+
+    planned_output_paths = {
+        "run_manifest_path": output_paths["run_manifest_path"],
+        "skipped_runs_path": output_paths["skipped_runs_path"],
+        "target_summary_path": output_paths["target_summary_path"],
+        "class_summary_path": output_paths["class_summary_path"],
+        "split_metrics_path": output_paths["split_metrics_path"],
+        "train_summary_path": output_paths["train_summary_path"],
+        "val_summary_path": output_paths["val_summary_path"],
+        "test_summary_path": output_paths["test_summary_path"],
+        "train_plot_path": output_paths["train_plot_path"],
+        "val_plot_path": output_paths["val_plot_path"],
+        "test_plot_path": output_paths["test_plot_path"],
+        "val_roc_plot_path": output_paths["val_roc_plot_path"],
+        "test_roc_plot_path": output_paths["test_roc_plot_path"],
+        "val_pr_plot_path": output_paths["val_pr_plot_path"],
+        "test_pr_plot_path": output_paths["test_pr_plot_path"],
+        "val_confusion_plot_path": output_paths["val_confusion_plot_path"],
+        "test_confusion_plot_path": output_paths["test_confusion_plot_path"],
+        "val_probability_plot_path": output_paths["val_probability_plot_path"],
+        "test_probability_plot_path": output_paths["test_probability_plot_path"],
+        "html_report_path": output_paths["html_report_path"],
+    }
+    for run_spec in run_specs:
+        per_run_paths = _build_per_run_output_paths(output_paths["per_run_dir"], run_spec)
+        planned_output_paths.update(
+            {
+                f"{build_run_slug(run_spec)}__metrics": per_run_paths["metrics_path"],
+                f"{build_run_slug(run_spec)}__predictions": per_run_paths["predictions_path"],
+                f"{build_run_slug(run_spec)}__config": per_run_paths["config_path"],
+            }
+        )
 
     validate_output_paths(
-        {
-            "run_manifest_path": output_paths["run_manifest_path"],
-            "skipped_runs_path": output_paths["skipped_runs_path"],
-            "split_metrics_path": output_paths["split_metrics_path"],
-            "train_summary_path": output_paths["train_summary_path"],
-            "val_summary_path": output_paths["val_summary_path"],
-            "test_summary_path": output_paths["test_summary_path"],
-            "train_plot_path": output_paths["train_plot_path"],
-            "val_plot_path": output_paths["val_plot_path"],
-            "test_plot_path": output_paths["test_plot_path"],
-            "html_report_path": output_paths["html_report_path"],
-        },
+        planned_output_paths,
         overwrite_existing_outputs=overwrite_existing_outputs,
     )
 
     target_summary_df = summarize_binary_target(annotated_df)
     target_summary_df.to_csv(output_paths["target_summary_path"], index=False)
     class_summary_df = summarize_main_glycan_class_by_split(annotated_df)
-
-    train_splits = tuple(str(split_name) for split_name in train_splits)
-    evaluation_splits = tuple(str(split_name) for split_name in evaluation_splits)
-    manifest_df = build_run_manifest(
-        run_specs=run_specs,
-        checkpoints_dir=checkpoints_dir,
-        model_subdir=model_subdir,
-    )
+    class_summary_df.to_csv(output_paths["class_summary_path"], index=False)
     manifest_df.to_csv(output_paths["run_manifest_path"], index=False)
 
     all_metric_rows: list[dict[str, Any]] = []
@@ -1227,6 +1838,7 @@ def run_embedding_logreg_suite(
             annotated_df=annotated_df,
             model_dir=model_dir,
             pooling_strategy=normalized_pooling_strategy,
+            embedding_layer_index=normalized_embedding_layer_index,
             batch_size=batch_size,
             max_length=max_length,
             device=device,
@@ -1297,6 +1909,7 @@ def run_embedding_logreg_suite(
 
     metrics_df = pd.DataFrame(all_metric_rows)
     metrics_df.to_csv(output_paths["split_metrics_path"], index=False)
+    combined_prediction_df = pd.concat(all_prediction_frames, ignore_index=True)
 
     # Save one sorted summary per split so the notebook can display train, val,
     # and test rankings directly without repeating sorting logic inline.
@@ -1325,6 +1938,51 @@ def run_embedding_logreg_suite(
             output_path=plot_path,
         )
 
+    diagnostic_plot_paths = {
+        "val_roc": _plot_roc_curve_comparison(
+            combined_prediction_df,
+            split_name="val",
+            output_path=output_paths["val_roc_plot_path"],
+        ),
+        "test_roc": _plot_roc_curve_comparison(
+            combined_prediction_df,
+            split_name="test",
+            output_path=output_paths["test_roc_plot_path"],
+        ),
+        "val_pr": _plot_precision_recall_comparison(
+            combined_prediction_df,
+            split_name="val",
+            output_path=output_paths["val_pr_plot_path"],
+        ),
+        "test_pr": _plot_precision_recall_comparison(
+            combined_prediction_df,
+            split_name="test",
+            output_path=output_paths["test_pr_plot_path"],
+        ),
+        "val_confusion": _plot_confusion_matrix_grid(
+            metrics_df,
+            split_name="val",
+            output_path=output_paths["val_confusion_plot_path"],
+        ),
+        "test_confusion": _plot_confusion_matrix_grid(
+            metrics_df,
+            split_name="test",
+            output_path=output_paths["test_confusion_plot_path"],
+        ),
+        "val_probability": _plot_probability_histogram_grid(
+            combined_prediction_df,
+            split_name="val",
+            output_path=output_paths["val_probability_plot_path"],
+            probability_threshold=probability_threshold,
+        ),
+        "test_probability": _plot_probability_histogram_grid(
+            combined_prediction_df,
+            split_name="test",
+            output_path=output_paths["test_probability_plot_path"],
+            probability_threshold=probability_threshold,
+        ),
+    }
+
     html_report_path = render_embedding_logreg_html_report(
         output_dir=output_paths["results_dir"],
         report_title=report_title,
@@ -1336,6 +1994,7 @@ def run_embedding_logreg_suite(
         test_summary_df=split_summaries["test"],
         skipped_df=skipped_df,
         plot_paths=created_plot_paths,
+        diagnostic_plot_paths=diagnostic_plot_paths,
     )
 
     return {
@@ -1344,11 +2003,12 @@ def run_embedding_logreg_suite(
         "manifest_df": manifest_df,
         "skipped_df": skipped_df,
         "metrics_df": metrics_df,
-        "prediction_df": pd.concat(all_prediction_frames, ignore_index=True),
+        "prediction_df": combined_prediction_df,
         "train_summary_df": split_summaries["train"],
         "val_summary_df": split_summaries["val"],
         "test_summary_df": split_summaries["test"],
         "plot_paths": created_plot_paths,
+        "diagnostic_plot_paths": diagnostic_plot_paths,
         "html_report_path": html_report_path,
         "output_paths": dict(output_paths),
     }

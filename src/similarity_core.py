@@ -195,6 +195,21 @@ def normalize_pooling_strategy(pooling_strategy: str | None = None) -> str:
     return normalized
 
 
+def normalize_embedding_layer_index(embedding_layer_index: int | None = None) -> int:
+    """Return one validated hidden-layer index for embedding extraction.
+
+    The hidden-state stack returned by Hugging Face models includes:
+
+    - index `0`: token embeddings before encoder blocks
+    - indices `1..N`: outputs after each encoder block
+    - index `-1`: the final encoder layer
+    - index `-2`: the penultimate encoder layer, and so on
+    """
+    if embedding_layer_index is None:
+        return -1
+    return int(embedding_layer_index)
+
+
 def _cls_pool_hidden_states(hidden_states: torch.Tensor) -> torch.Tensor:
     """Return the hidden state at the first token position for each sequence."""
     return hidden_states[:, 0, :]
@@ -220,6 +235,29 @@ def _max_pool_hidden_states(hidden_states: torch.Tensor, content_mask: torch.Ten
     return pooled_hidden
 
 
+def _select_embedding_hidden_states(model_outputs, embedding_layer_index: int) -> torch.Tensor:
+    """Return the requested hidden-state tensor from one model forward pass."""
+    normalized_layer_index = normalize_embedding_layer_index(embedding_layer_index)
+    if normalized_layer_index == -1:
+        return model_outputs.last_hidden_state
+
+    hidden_state_stack = getattr(model_outputs, "hidden_states", None)
+    if hidden_state_stack is None:
+        raise ValueError(
+            "Model outputs did not include hidden_states. "
+            "Request a specific embedding layer only when hidden states are available."
+        )
+
+    num_hidden_state_tensors = len(hidden_state_stack)
+    if normalized_layer_index >= num_hidden_state_tensors or normalized_layer_index < -num_hidden_state_tensors:
+        raise ValueError(
+            f"embedding_layer_index {normalized_layer_index} is out of range for "
+            f"{num_hidden_state_tensors} available hidden-state tensors."
+        )
+
+    return hidden_state_stack[normalized_layer_index]
+
+
 # ---------------------------------------------------------------------------
 # Embedding and similarity helpers
 # ---------------------------------------------------------------------------
@@ -233,6 +271,7 @@ def embed_sequences(
     max_length: int | None = None,
     batch_size: int = 32,
     pooling_strategy: str = "mean",
+    embedding_layer_index: int = -1,
 ) -> torch.Tensor:
     """Embed glycan sequences with configurable pooling over real content tokens.
 
@@ -250,6 +289,7 @@ def embed_sequences(
     encoder = _get_encoder(model)
     use_max_length = _effective_max_length(tokenizer, max_length)
     normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
+    normalized_embedding_layer_index = normalize_embedding_layer_index(embedding_layer_index)
     embedding_batches = []
 
     for start_index in range(0, len(sequences), batch_size):
@@ -264,7 +304,14 @@ def embed_sequences(
         )
         encoded_batch = {name: tensor.to(runtime_device) for name, tensor in encoded_batch.items()}
 
-        hidden_states = encoder(**encoded_batch).last_hidden_state
+        model_outputs = encoder(
+            **encoded_batch,
+            output_hidden_states=(normalized_embedding_layer_index != -1),
+        )
+        hidden_states = _select_embedding_hidden_states(
+            model_outputs,
+            embedding_layer_index=normalized_embedding_layer_index,
+        )
         if normalized_pooling_strategy == "cls":
             pooled_batch = _cls_pool_hidden_states(hidden_states)
         else:
@@ -286,6 +333,7 @@ def compare_sequence_pair(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     pooling_strategy: str = "mean",
+    embedding_layer_index: int = -1,
 ) -> dict:
     """Embed two sequences and return cosine similarity plus token previews."""
     embeddings = embed_sequences(
@@ -296,6 +344,7 @@ def compare_sequence_pair(
         max_length=max_length,
         batch_size=2,
         pooling_strategy=pooling_strategy,
+        embedding_layer_index=embedding_layer_index,
     )
     cosine_similarity = torch.nn.functional.cosine_similarity(embeddings[0:1], embeddings[1:2]).item()
 
@@ -315,6 +364,7 @@ def compare_sequence_pairs(
     device: str | torch.device | None = None,
     max_length: int | None = None,
     pooling_strategy: str = "mean",
+    embedding_layer_index: int = -1,
 ) -> "pd.DataFrame":
     """Return one comparison row per named pair of glycan sequences.
 
@@ -334,6 +384,7 @@ def compare_sequence_pairs(
             device=device,
             max_length=max_length,
             pooling_strategy=pooling_strategy,
+            embedding_layer_index=embedding_layer_index,
         )
         row = {
             "pair_name": pair["pair_name"],
@@ -358,6 +409,7 @@ def similarity_matrix(
     max_length: int | None = None,
     batch_size: int = 32,
     pooling_strategy: str = "mean",
+    embedding_layer_index: int = -1,
 ) -> torch.Tensor:
     """Return the full pairwise cosine-similarity matrix for a sequence list."""
     embeddings = embed_sequences(
@@ -368,6 +420,7 @@ def similarity_matrix(
         max_length=max_length,
         batch_size=batch_size,
         pooling_strategy=pooling_strategy,
+        embedding_layer_index=embedding_layer_index,
     )
     # Normalize first so the matrix multiply is exactly cosine similarity.
     normalized_embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
@@ -382,6 +435,7 @@ def similarity_matrix_dataframe(
     max_length: int | None = None,
     batch_size: int = 32,
     pooling_strategy: str = "mean",
+    embedding_layer_index: int = -1,
 ) -> "pd.DataFrame":
     """Return the pairwise cosine-similarity matrix as a labeled dataframe."""
     import pandas as pd
@@ -394,6 +448,7 @@ def similarity_matrix_dataframe(
         max_length=max_length,
         batch_size=batch_size,
         pooling_strategy=pooling_strategy,
+        embedding_layer_index=embedding_layer_index,
     )
     return pd.DataFrame(similarity_tensor.numpy(), index=sequences, columns=sequences)
 
