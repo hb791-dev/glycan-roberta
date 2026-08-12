@@ -93,6 +93,50 @@ def load_run_registry(registry_csv_path: str | Path) -> pd.DataFrame:
     return registry_df
 
 
+def resolve_run_registry_path(
+    *,
+    drive_root: str | Path,
+    repo_dir: str | Path | None = None,
+    cleaned_registry_filename: str = "registry_cleaned_run_index.csv",
+    fallback_registry_filename: str = "run_index.csv",
+) -> Path:
+    """Resolve the run-registry CSV using the project's Drive-first layout.
+
+    Notebook 14 should prefer the cleaned audit snapshot when it exists in the
+    Drive-backed project registry folder. If that file is not available, the
+    notebook falls back to the maintained project run index.
+    """
+    candidate_paths: list[Path] = [
+        Path(drive_root) / "registry" / cleaned_registry_filename,
+        Path(drive_root) / cleaned_registry_filename,
+        Path(drive_root) / "registry" / fallback_registry_filename,
+    ]
+    if repo_dir is not None:
+        candidate_paths.extend(
+            [
+                Path(repo_dir) / cleaned_registry_filename,
+                Path(repo_dir) / "registry" / fallback_registry_filename,
+            ]
+        )
+
+    seen_paths: set[Path] = set()
+    checked_paths: list[Path] = []
+    for candidate_path in candidate_paths:
+        resolved_candidate = Path(candidate_path)
+        if resolved_candidate in seen_paths:
+            continue
+        seen_paths.add(resolved_candidate)
+        checked_paths.append(resolved_candidate)
+        if resolved_candidate.exists():
+            return resolved_candidate
+
+    checked_path_text = "\n".join(f"- {path}" for path in checked_paths)
+    raise FileNotFoundError(
+        "Run registry CSV not found. Checked:\n"
+        f"{checked_path_text}"
+    )
+
+
 def build_architecture_label(
     num_hidden_layers: int | str,
     hidden_size: int | str,
