@@ -16,6 +16,7 @@ compare:
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Mapping, Sequence
 import gc
 from html import escape
@@ -1191,13 +1192,27 @@ def _build_public_copied_files_table(copied_files_df: pd.DataFrame) -> pd.DataFr
     return public_df
 
 
+def _build_image_data_uri(image_path: str | Path) -> str:
+    """Return one base64 data URI for a saved local plot image."""
+    image_path = require_existing_path(image_path, "Plot image")
+    suffix = image_path.suffix.lower()
+    mime_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+    }.get(suffix, "application/octet-stream")
+    encoded_image = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded_image}"
+
+
 def _render_plot_card(
     plot_path: str | Path | None,
     *,
-    report_dir: str | Path,
     title: str,
 ) -> str:
-    """Render one locally saved metric plot as a linked image card."""
+    """Render one locally saved metric plot as an embedded image card."""
     if not plot_path:
         return (
             "<div class='plot-card'>"
@@ -1215,15 +1230,12 @@ def _render_plot_card(
             "</div>"
         )
 
-    relative_plot_path = plot_path.relative_to(Path(report_dir))
-    image_src = escape(relative_plot_path.as_posix(), quote=True)
+    image_src = escape(_build_image_data_uri(plot_path), quote=True)
     return (
         "<div class='plot-card'>"
         f"<h3>{escape(title)}</h3>"
-        f"<a href='{image_src}' target='_blank' rel='noopener'>"
         f"<img src='{image_src}' alt='{escape(title, quote=True)}'>"
-        "</a>"
-        "<p class='subtle'>Click the image to open the full-size saved PNG.</p>"
+        f"<p class='subtle'>Saved PNG: {escape(plot_path.name)}</p>"
         "</div>"
     )
 
@@ -1262,8 +1274,6 @@ def render_embedding_logreg_html_report(
         ("Skipped runs", len(skipped_df)),
     ]
     public_manifest_df = _build_public_manifest_table(manifest_df)
-    public_train_summary_df = _build_public_metric_summary_table(train_summary_df)
-    public_val_summary_df = _build_public_metric_summary_table(val_summary_df)
     public_test_summary_df = _build_public_metric_summary_table(test_summary_df)
     public_skipped_df = _build_public_skipped_table(skipped_df)
     summary_cards_html = "".join(
@@ -1275,13 +1285,12 @@ def render_embedding_logreg_html_report(
         )
         for label, value in summary_cards
     )
-    metric_grid_cards_html = "".join(
-        [
-            _render_plot_card(plot_paths.get("train"), report_dir=output_dir, title="Train metric grid"),
-            _render_plot_card(plot_paths.get("val"), report_dir=output_dir, title="Validation metric grid"),
-            _render_plot_card(plot_paths.get("test"), report_dir=output_dir, title="Test metric grid"),
-        ]
-    )
+    metric_grid_cards_html = ""
+    if plot_paths.get("test"):
+        metric_grid_cards_html = _render_plot_card(
+            plot_paths.get("test"),
+            title="Held-out test metric grid",
+        )
     skipped_callout_html = ""
     if not public_skipped_df.empty:
         skipped_callout_html = (
@@ -1293,60 +1302,50 @@ def render_embedding_logreg_html_report(
             "</section>"
         )
 
-    split_diagnostic_sections: list[str] = []
-    for split_key, split_heading in (("val", "Validation"), ("test", "Test")):
-        split_plot_keys = (
-            f"{split_key}_roc",
-            f"{split_key}_pr",
-            f"{split_key}_confusion",
-            f"{split_key}_probability",
-        )
-        if not any(diagnostic_plot_paths.get(plot_key) for plot_key in split_plot_keys):
-            continue
-        split_cards = "".join(
+    test_diagnostic_section_html = ""
+    test_plot_keys = (
+        "test_roc",
+        "test_pr",
+        "test_confusion",
+        "test_probability",
+    )
+    if any(diagnostic_plot_paths.get(plot_key) for plot_key in test_plot_keys):
+        test_cards = "".join(
             [
                 _render_plot_card(
-                    diagnostic_plot_paths.get(f"{split_key}_roc"),
-                    report_dir=output_dir,
-                    title=f"{split_heading} ROC curve",
+                    diagnostic_plot_paths.get("test_roc"),
+                    title="Test ROC curve",
                 ),
                 _render_plot_card(
-                    diagnostic_plot_paths.get(f"{split_key}_pr"),
-                    report_dir=output_dir,
-                    title=f"{split_heading} precision-recall curve",
+                    diagnostic_plot_paths.get("test_pr"),
+                    title="Test precision-recall curve",
                 ),
                 _render_plot_card(
-                    diagnostic_plot_paths.get(f"{split_key}_confusion"),
-                    report_dir=output_dir,
-                    title=f"{split_heading} confusion matrices",
+                    diagnostic_plot_paths.get("test_confusion"),
+                    title="Test confusion matrices",
                 ),
                 _render_plot_card(
-                    diagnostic_plot_paths.get(f"{split_key}_probability"),
-                    report_dir=output_dir,
-                    title=f"{split_heading} probability distributions",
+                    diagnostic_plot_paths.get("test_probability"),
+                    title="Test probability distributions",
                 ),
             ]
         )
-        split_diagnostic_sections.append(
+        test_diagnostic_section_html = (
             "<section>"
-            f"<h2>{split_heading} logistic-regression diagnostics</h2>"
-            "<p class='subtle'>These plots show the actual classifier behavior, not just summary scores.</p>"
-            f"<div class='plot-grid diagnostics-grid'>{split_cards}</div>"
+            "<h2>Held-out test diagnostics</h2>"
+            "<p class='subtle'>These plots show the final held-out test behavior for each compared embedding source.</p>"
+            f"<div class='plot-grid diagnostics-grid'>{test_cards}</div>"
             "</section>"
         )
 
-    summary_section_html_parts: list[str] = []
-    for section_title, summary_df in (
-        ("Train summary", public_train_summary_df),
-        ("Validation summary", public_val_summary_df),
-        ("Test summary", public_test_summary_df),
-    ):
-        if summary_df.empty:
-            continue
-        summary_section_html_parts.append(
+    test_summary_section_html = ""
+    if not public_test_summary_df.empty:
+        test_summary_section_html = (
             "<section>"
-            f"<h2>{section_title}</h2>"
-            f"<div class='table-wrap'>{_render_dataframe_html(summary_df)}</div>"
+            "<h2>Held-out test summary</h2>"
+            "<div class='table-wrap'>"
+            f"{_render_dataframe_html(public_test_summary_df)}"
+            "</div>"
             "</section>"
         )
 
@@ -1485,14 +1484,16 @@ def render_embedding_logreg_html_report(
     }}
   </style>
 </head>
-<body>
-  <header>
-    <h1>{escape(report_title)}</h1>
-    <p class="subtle">
-      This report compares one tokenizer plus one pretrained experiment across the saved model states
-      <code>pretrained_mlm</code>, <code>classification_mlm_init</code>, and <code>classification_random_init</code>.
-    </p>
-  </header>
+	<body>
+	  <header>
+	    <h1>{escape(report_title)}</h1>
+	    <p class="subtle">
+	      This report fits each logistic-regression probe on the training split and
+	      compares the final held-out <code>test</code> performance across
+	      <code>pretrained_mlm</code>, <code>classification_mlm_init</code>, and
+	      <code>classification_random_init</code>.
+	    </p>
+	  </header>
   <main class="container">
     <section>
       <h2>Run overview</h2>
@@ -1512,16 +1513,16 @@ def render_embedding_logreg_html_report(
       <h2>Broad glycan-class counts</h2>
       <div class="table-wrap">{_render_dataframe_html(class_summary_df)}</div>
     </section>
-    <section>
-      <h2>Metric ranking grids</h2>
-      <p class="subtle">These summarize score rankings across model states for each split.</p>
-      <div class="plot-grid">{metric_grid_cards_html}</div>
-    </section>
-    {''.join(split_diagnostic_sections)}
-    {''.join(summary_section_html_parts)}
-  </main>
-</body>
-</html>
+	    <section>
+	      <h2>Held-out test ranking</h2>
+	      <p class="subtle">This summarizes the held-out test ranking across the compared model states.</p>
+	      <div class="plot-grid">{metric_grid_cards_html}</div>
+	    </section>
+	    {test_diagnostic_section_html}
+	    {test_summary_section_html}
+	  </main>
+	</body>
+	</html>
 """
     html_path.write_text(html, encoding="utf-8")
     return html_path
