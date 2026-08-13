@@ -1744,9 +1744,6 @@ def validate_probe_split_configuration(
             f"Invalid evaluation_splits: {invalid_evaluation_splits or 'none'}."
         )
 
-    if any(split_name not in normalized_evaluation_splits for split_name in normalized_train_splits):
-        raise ValueError("Every train split must also appear in evaluation_splits for notebook 14.")
-
     return normalized_train_splits, normalized_evaluation_splits
 
 
