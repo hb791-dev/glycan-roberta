@@ -2026,11 +2026,11 @@ def _normalize_highlight_accessions(highlight_accessions: Sequence[str] | None) 
 def _select_highlight_rows(
     annotated_df: pd.DataFrame,
     highlight_accessions: Sequence[str] | None,
-) -> tuple[pd.DataFrame, dict[str, int]]:
+) -> tuple[pd.DataFrame, dict[str, int], list[str]]:
     """Return one representative row index for each highlighted accession."""
     normalized_accessions = _normalize_highlight_accessions(highlight_accessions)
     if not normalized_accessions:
-        return pd.DataFrame(), {}
+        return pd.DataFrame(), {}, []
 
     accession_series = annotated_df[ACCESSION_COLUMN].fillna("").map(str).map(str.strip)
     selected_rows: list[pd.Series] = []
@@ -2048,14 +2048,8 @@ def _select_highlight_rows(
         selected_row["highlight_occurrence_count"] = int(len(matched_indices))
         selected_rows.append(selected_row)
 
-    if missing_accessions:
-        raise ValueError(
-            "Some highlighted accessions were not found in the prepared classification rows: "
-            f"{missing_accessions}"
-        )
-
     highlight_df = pd.DataFrame(selected_rows).reset_index(drop=True)
-    return highlight_df, highlight_row_lookup
+    return highlight_df, highlight_row_lookup, missing_accessions
 
 
 def _plot_snapshot_metric_progression(
@@ -2484,6 +2478,7 @@ def build_snapshot_progression_artifacts(
     umap_color_column: str = "main_glycan_class",
 ) -> dict[str, Any]:
     """Build the snapshot-progression plots and tables for notebook 14."""
+    normalized_highlight_accessions = _normalize_highlight_accessions(highlight_accessions)
     completed_run_specs = [
         run_spec
         for run_spec in run_specs
@@ -2500,6 +2495,9 @@ def build_snapshot_progression_artifacts(
             "highlight_positions_df": pd.DataFrame(),
             "highlight_similarity_df": pd.DataFrame(),
             "highlight_neighbors_df": pd.DataFrame(),
+            "requested_highlight_accessions": normalized_highlight_accessions,
+            "found_highlight_accessions": [],
+            "missing_highlight_accessions": normalized_highlight_accessions,
         }
 
     snapshot_progression_plot_path = None
@@ -2509,6 +2507,12 @@ def build_snapshot_progression_artifacts(
             split_name=split_name,
             output_path=output_paths["test_snapshot_progression_plot_path"],
         )
+
+    _, highlight_row_lookup, missing_highlight_accessions = _select_highlight_rows(
+        annotated_df,
+        normalized_highlight_accessions,
+    )
+    found_highlight_accessions = list(highlight_row_lookup)
 
     snapshot_umap_df = _build_snapshot_umap_long_dataframe(
         annotated_df,
@@ -2524,14 +2528,13 @@ def build_snapshot_progression_artifacts(
         snapshot_umap_df,
         output_path=output_paths["snapshot_umap_plot_path"],
         color_column=umap_color_column,
-        highlight_accessions=highlight_accessions,
+        highlight_accessions=found_highlight_accessions,
         title=f"Shared UMAP across compared {comparison_title_plural}",
     )
 
-    _, highlight_row_lookup = _select_highlight_rows(annotated_df, highlight_accessions)
     highlight_positions_df = _build_highlight_accession_positions_table(
         snapshot_umap_df,
-        highlight_accessions,
+        found_highlight_accessions,
     )
     highlight_similarity_df = _build_highlight_similarity_table(
         annotated_df,
@@ -2557,6 +2560,9 @@ def build_snapshot_progression_artifacts(
         "highlight_positions_df": highlight_positions_df,
         "highlight_similarity_df": highlight_similarity_df,
         "highlight_neighbors_df": highlight_neighbors_df,
+        "requested_highlight_accessions": normalized_highlight_accessions,
+        "found_highlight_accessions": found_highlight_accessions,
+        "missing_highlight_accessions": missing_highlight_accessions,
         "comparison_axis_name": comparison_axis_name,
         "comparison_title": comparison_title,
         "comparison_title_plural": comparison_title_plural,
@@ -2858,6 +2864,9 @@ def render_embedding_logreg_html_report(
     highlight_positions_df = snapshot_analysis.get("highlight_positions_df", pd.DataFrame())
     highlight_similarity_df = snapshot_analysis.get("highlight_similarity_df", pd.DataFrame())
     highlight_neighbors_df = snapshot_analysis.get("highlight_neighbors_df", pd.DataFrame())
+    requested_highlight_accessions = snapshot_analysis.get("requested_highlight_accessions", [])
+    found_highlight_accessions = snapshot_analysis.get("found_highlight_accessions", [])
+    missing_highlight_accessions = snapshot_analysis.get("missing_highlight_accessions", [])
     if snapshot_progression_plot_path or snapshot_umap_plot_path or not highlight_positions_df.empty:
         snapshot_cards = "".join(
             [
@@ -2912,10 +2921,25 @@ def render_embedding_logreg_html_report(
                 "cosine_similarity",
             ],
         )
+        highlight_status_html = ""
+        if requested_highlight_accessions:
+            highlight_status_lines = [
+                f"Requested highlights: {escape(', '.join(map(str, requested_highlight_accessions)))}.",
+                f"Found in active probe rows: {escape(', '.join(map(str, found_highlight_accessions)) if found_highlight_accessions else 'none')}.",
+            ]
+            if missing_highlight_accessions:
+                highlight_status_lines.append(
+                    "Skipped because they were not present in the active probe rows: "
+                    f"{escape(', '.join(map(str, missing_highlight_accessions)))}."
+                )
+            highlight_status_html = (
+                f"<p class='subtle'>{' '.join(highlight_status_lines)}</p>"
+            )
         snapshot_section_html = (
             "<section>"
             f"<h2>{escape(comparison_title)} comparison</h2>"
             f"<p class='subtle'>These sections track how one model state changes across compared {escape(comparison_title_plural)} using the held-out test probe and a shared UMAP projection.</p>"
+            f"{highlight_status_html}"
             f"<div class='plot-grid diagnostics-grid'>{snapshot_cards}</div>"
             "<h3>Highlighted accession positions</h3>"
             f"<div class='table-wrap'>{_render_dataframe_html(highlight_positions_public_df)}</div>"
