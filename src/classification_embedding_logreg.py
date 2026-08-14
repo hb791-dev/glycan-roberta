@@ -20,6 +20,7 @@ import base64
 from collections.abc import Mapping, Sequence
 import gc
 from html import escape
+from itertools import combinations
 import json
 from pathlib import Path
 import re
@@ -27,6 +28,7 @@ import shutil
 from typing import Any
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
@@ -49,6 +51,8 @@ import torch
 from src.classification_embedding_umap import (
     SUPPORTED_MODEL_VARIANTS,
     annotate_classification_umap_metadata,
+    build_umap_dataframe,
+    compute_umap_projection,
     filter_classification_dataframe_by_split,
     load_combined_classification_splits,
     resolve_embedding_model_dir,
@@ -100,6 +104,7 @@ MODEL_VARIANT_LABELS = {
     "classification_random_init": "Classifier, random init",
 }
 STANDARD_PROBE_SPLITS = ("train", "val", "test")
+DEFAULT_HIGHLIGHT_POINT_COLORS = ("#c0392b", "#1f78b4", "#2f9e44", "#8e44ad")
 
 
 def load_run_registry(registry_csv_path: str | Path) -> pd.DataFrame:
@@ -422,6 +427,111 @@ def build_registry_run_specs(
     return run_specs
 
 
+def resolve_single_registry_run(
+    registry_df: pd.DataFrame,
+    *,
+    tokenizer_family: str,
+    experiment_name: str,
+    only_fresh_runs: bool = True,
+    only_tested_runs: bool = True,
+):
+    """Return one registry row for the selected tokenizer family and experiment."""
+    selected_df = _filter_registry_runs(
+        registry_df,
+        tokenizer_families=[tokenizer_family],
+        experiment_names=[experiment_name],
+        only_fresh_runs=only_fresh_runs,
+        only_tested_runs=only_tested_runs,
+    )
+    if selected_df.empty:
+        raise ValueError(
+            "No registry rows matched the requested tokenizer family and experiment. "
+            "Check TOKENIZER_FAMILY, EXPERIMENT_NAME, or the registry filters."
+        )
+    if len(selected_df) != 1:
+        raise ValueError(
+            "Snapshot progression expects exactly one registry row for the selected "
+            "tokenizer family and experiment."
+        )
+    return selected_df.iloc[0]
+
+
+def build_snapshot_run_specs(
+    registry_df: pd.DataFrame,
+    *,
+    checkpoints_dir: str | Path,
+    tokenizer_family: str,
+    experiment_name: str,
+    snapshot_model_variant: str = "pretrained_mlm",
+    snapshot_model_subdirs: Sequence[str] = ("best_model",),
+    classifier_mlm_run_label: str = "cls_lr2e-5_ep10_bs16_mlm",
+    classifier_random_run_label: str = "cls_lr2e-5_ep10_bs16_randominit",
+    only_fresh_runs: bool = True,
+    only_tested_runs: bool = True,
+) -> list[dict[str, Any]]:
+    """Build ordered run specs for one model lineage across saved snapshots."""
+    normalized_variant = str(snapshot_model_variant).strip()
+    if normalized_variant not in SUPPORTED_MODEL_VARIANTS:
+        raise ValueError(
+            f"Unsupported snapshot_model_variant {snapshot_model_variant!r}. "
+            f"Choose from {SUPPORTED_MODEL_VARIANTS}."
+        )
+
+    normalized_snapshot_subdirs = [
+        str(snapshot_name).strip()
+        for snapshot_name in snapshot_model_subdirs
+        if str(snapshot_name).strip()
+    ]
+    if not normalized_snapshot_subdirs:
+        raise ValueError("At least one snapshot model subdirectory is required.")
+
+    row = resolve_single_registry_run(
+        registry_df,
+        tokenizer_family=tokenizer_family,
+        experiment_name=experiment_name,
+        only_fresh_runs=only_fresh_runs,
+        only_tested_runs=only_tested_runs,
+    )
+    base_run_spec = _build_one_registry_run_spec(
+        row,
+        model_variant=normalized_variant,
+        classifier_mlm_run_label=classifier_mlm_run_label,
+        classifier_random_run_label=classifier_random_run_label,
+    )
+
+    snapshot_run_specs: list[dict[str, Any]] = []
+    for snapshot_order, snapshot_model_subdir in enumerate(normalized_snapshot_subdirs):
+        model_dir = resolve_embedding_model_dir(
+            checkpoints_dir=checkpoints_dir,
+            tokenizer_family=tokenizer_family,
+            experiment_name=experiment_name,
+            model_variant=normalized_variant,
+            classifier_mlm_run_label=classifier_mlm_run_label,
+            classifier_random_run_label=classifier_random_run_label,
+            model_subdir=snapshot_model_subdir,
+        )
+        snapshot_label = str(snapshot_model_subdir)
+        snapshot_run_specs.append(
+            {
+                **base_run_spec,
+                "model_dir": str(model_dir),
+                "snapshot_label": snapshot_label,
+                "snapshot_model_subdir": snapshot_model_subdir,
+                "snapshot_order": int(snapshot_order),
+                "display_label": (
+                    f"{MODEL_VARIANT_LABELS.get(normalized_variant, normalized_variant)}"
+                    f" | {snapshot_label}"
+                ),
+                "comparison_group_label": (
+                    f"{tokenizer_family} | {base_run_spec['architecture_label']} | "
+                    f"{MODEL_VARIANT_LABELS.get(normalized_variant, normalized_variant)}"
+                ),
+            }
+        )
+
+    return snapshot_run_specs
+
+
 def build_embedding_logreg_output_paths(
     project_root: str | Path,
     tokenizer_family: str,
@@ -463,6 +573,12 @@ def build_embedding_logreg_output_paths(
         "test_confusion_plot_path": results_dir / "test_confusion_matrix_grid.png",
         "val_probability_plot_path": results_dir / "val_probability_histogram_grid.png",
         "test_probability_plot_path": results_dir / "test_probability_histogram_grid.png",
+        "test_snapshot_progression_plot_path": results_dir / "test_snapshot_metric_progression.png",
+        "snapshot_umap_coordinates_path": results_dir / "snapshot_umap_coordinates.csv",
+        "snapshot_umap_plot_path": results_dir / "snapshot_umap_highlight_grid.png",
+        "highlight_accession_table_path": results_dir / "highlight_accession_positions.csv",
+        "highlight_similarity_table_path": results_dir / "highlight_accession_pairwise_similarity.csv",
+        "highlight_neighbor_table_path": results_dir / "highlight_accession_neighbors.csv",
         "html_report_path": results_dir / "n_glycan_logistic_regression_report.html",
     }
 
@@ -589,6 +705,9 @@ def resolve_run_model_dir_from_spec(
     model_subdir: str = "best_model",
 ) -> Path:
     """Resolve one embedding checkpoint directory from a notebook run spec."""
+    explicit_model_dir = str(run_spec.get("model_dir", "")).strip()
+    if explicit_model_dir:
+        return Path(explicit_model_dir)
     return resolve_embedding_model_dir(
         checkpoints_dir=checkpoints_dir,
         tokenizer_family=str(run_spec["tokenizer_family"]),
@@ -609,13 +728,15 @@ def _slugify_text(value: str) -> str:
 
 def build_run_slug(run_spec: Mapping[str, Any]) -> str:
     """Build one stable folder name for one compared run."""
-    return "__".join(
-        [
-            _slugify_text(run_spec["tokenizer_family"]),
-            _slugify_text(run_spec["experiment_name"]),
-            _slugify_text(run_spec["model_variant"]),
-        ]
-    )
+    slug_parts = [
+        _slugify_text(run_spec["tokenizer_family"]),
+        _slugify_text(run_spec["experiment_name"]),
+        _slugify_text(run_spec["model_variant"]),
+    ]
+    snapshot_label = str(run_spec.get("snapshot_label", "")).strip()
+    if snapshot_label:
+        slug_parts.append(_slugify_text(snapshot_label))
+    return "__".join(slug_parts)
 
 
 def build_run_manifest(
@@ -1120,6 +1241,479 @@ def _plot_probability_histogram_grid(
     return output_path
 
 
+def _normalize_highlight_accessions(highlight_accessions: Sequence[str] | None) -> list[str]:
+    """Return highlight accessions in first-seen order without blanks."""
+    normalized_accessions: list[str] = []
+    for accession in highlight_accessions or ():
+        cleaned_accession = str(accession).strip()
+        if not cleaned_accession or cleaned_accession in normalized_accessions:
+            continue
+        normalized_accessions.append(cleaned_accession)
+    return normalized_accessions
+
+
+def _select_highlight_rows(
+    annotated_df: pd.DataFrame,
+    highlight_accessions: Sequence[str] | None,
+) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Return one representative row index for each highlighted accession."""
+    normalized_accessions = _normalize_highlight_accessions(highlight_accessions)
+    if not normalized_accessions:
+        return pd.DataFrame(), {}
+
+    accession_series = annotated_df[ACCESSION_COLUMN].fillna("").map(str).map(str.strip)
+    selected_rows: list[pd.Series] = []
+    highlight_row_lookup: dict[str, int] = {}
+    missing_accessions: list[str] = []
+
+    for accession in normalized_accessions:
+        matched_indices = accession_series.index[accession_series.eq(accession)].tolist()
+        if not matched_indices:
+            missing_accessions.append(accession)
+            continue
+        chosen_index = int(matched_indices[0])
+        highlight_row_lookup[accession] = chosen_index
+        selected_row = annotated_df.loc[chosen_index].copy()
+        selected_row["highlight_occurrence_count"] = int(len(matched_indices))
+        selected_rows.append(selected_row)
+
+    if missing_accessions:
+        raise ValueError(
+            "Some highlighted accessions were not found in the prepared classification rows: "
+            f"{missing_accessions}"
+        )
+
+    highlight_df = pd.DataFrame(selected_rows).reset_index(drop=True)
+    return highlight_df, highlight_row_lookup
+
+
+def _plot_snapshot_metric_progression(
+    metrics_df: pd.DataFrame,
+    *,
+    split_name: str,
+    output_path: str | Path,
+    metric_names: Sequence[str] = ("roc_auc", "average_precision", "f1", "balanced_accuracy"),
+) -> Path | None:
+    """Plot held-out metric trends across ordered snapshot labels."""
+    plot_df = metrics_df.loc[metrics_df["split"] == str(split_name)].copy()
+    if plot_df.empty or "snapshot_order" not in plot_df.columns:
+        return None
+
+    plot_df["snapshot_order"] = plot_df["snapshot_order"].astype(int)
+    plot_df["snapshot_label"] = plot_df["snapshot_label"].fillna("").map(str)
+    plot_df = plot_df.sort_values(["comparison_group_label", "snapshot_order", "display_label"], kind="stable")
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    group_column = "comparison_group_label" if "comparison_group_label" in plot_df.columns else "model_variant"
+    group_values = plot_df[group_column].fillna("").map(str).unique().tolist()
+
+    fig, axes = plt.subplots(len(metric_names), 1, figsize=(12, max(7, 2.6 * len(metric_names))), sharex=True)
+    if len(metric_names) == 1:
+        axes = [axes]
+
+    color_map = plt.get_cmap("tab10")
+    group_colors = {group_name: color_map(index % color_map.N) for index, group_name in enumerate(group_values)}
+    for axis, metric_name in zip(axes, metric_names):
+        for group_name in group_values:
+            group_df = plot_df.loc[plot_df[group_column].eq(group_name)].sort_values("snapshot_order", kind="stable")
+            axis.plot(
+                group_df["snapshot_order"],
+                group_df[metric_name].to_numpy(dtype=float),
+                marker="o",
+                linewidth=2.2,
+                color=group_colors[group_name],
+                label=group_name,
+            )
+        axis.set_ylabel(metric_name)
+        axis.set_title(f"{split_name.title()} {metric_name} across snapshots")
+        axis.grid(alpha=0.18)
+        if metric_name in PLOT_UNIT_INTERVAL_METRICS:
+            axis.set_ylim(0.0, 1.0)
+
+    tick_df = plot_df.sort_values("snapshot_order", kind="stable").drop_duplicates("snapshot_order")
+    axes[-1].set_xticks(tick_df["snapshot_order"].to_list())
+    axes[-1].set_xticklabels(tick_df["snapshot_label"].to_list(), rotation=25, ha="right")
+    axes[-1].set_xlabel("Snapshot")
+    if len(group_values) > 1:
+        axes[0].legend(loc="lower right", frameon=False)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def _build_snapshot_umap_long_dataframe(
+    annotated_df: pd.DataFrame,
+    completed_run_specs: Sequence[Mapping[str, Any]],
+    row_embeddings_by_run_slug: Mapping[str, np.ndarray],
+    *,
+    umap_neighbors: int,
+    umap_min_dist: float,
+    umap_metric: str,
+    umap_random_state: int,
+) -> pd.DataFrame:
+    """Build one long dataframe with shared-UMAP coordinates for each snapshot."""
+    if not completed_run_specs:
+        return pd.DataFrame()
+
+    ordered_specs = sorted(
+        completed_run_specs,
+        key=lambda run_spec: (
+            int(run_spec.get("snapshot_order", 0)),
+            str(run_spec.get("display_label", "")),
+        ),
+    )
+    embedding_blocks = [row_embeddings_by_run_slug[build_run_slug(run_spec)] for run_spec in ordered_specs]
+    stacked_embeddings = np.vstack(embedding_blocks)
+    shared_coordinates = compute_umap_projection(
+        stacked_embeddings,
+        n_neighbors=umap_neighbors,
+        min_dist=umap_min_dist,
+        metric=umap_metric,
+        random_state=umap_random_state,
+    )
+
+    coordinate_frames: list[pd.DataFrame] = []
+    start_index = 0
+    num_rows = len(annotated_df)
+    for run_spec in ordered_specs:
+        end_index = start_index + num_rows
+        snapshot_coordinates = shared_coordinates[start_index:end_index]
+        snapshot_df = build_umap_dataframe(annotated_df, snapshot_coordinates)
+        snapshot_df["run_slug"] = build_run_slug(run_spec)
+        snapshot_df["display_label"] = str(run_spec.get("display_label", ""))
+        snapshot_df["model_variant"] = str(run_spec.get("model_variant", ""))
+        snapshot_df["snapshot_label"] = str(run_spec.get("snapshot_label", ""))
+        snapshot_df["snapshot_order"] = int(run_spec.get("snapshot_order", 0))
+        coordinate_frames.append(snapshot_df)
+        start_index = end_index
+
+    return pd.concat(coordinate_frames, ignore_index=True)
+
+
+def _plot_snapshot_umap_grid(
+    snapshot_umap_df: pd.DataFrame,
+    *,
+    output_path: str | Path,
+    color_column: str,
+    highlight_accessions: Sequence[str] | None = None,
+    title: str = "Shared UMAP across snapshots",
+) -> Path | None:
+    """Render one grid of shared-UMAP panels with highlighted accessions."""
+    if snapshot_umap_df.empty:
+        return None
+    if color_column not in snapshot_umap_df.columns:
+        raise ValueError(f"UMAP color column {color_column!r} is missing from the snapshot dataframe.")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ordered_accessions = _normalize_highlight_accessions(highlight_accessions)
+    ordered_snapshots = (
+        snapshot_umap_df[["snapshot_order", "snapshot_label"]]
+        .drop_duplicates()
+        .sort_values("snapshot_order", kind="stable")
+    )
+    num_panels = len(ordered_snapshots)
+    num_columns = min(2, num_panels)
+    num_rows = int(np.ceil(num_panels / max(1, num_columns)))
+    fig, axes = plt.subplots(
+        num_rows,
+        num_columns,
+        figsize=(7.2 * max(1, num_columns), 6.2 * max(1, num_rows)),
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+    )
+    axes_flat = axes.ravel()
+
+    category_values = snapshot_umap_df[color_column].fillna("missing").map(str)
+    ordered_categories = category_values.value_counts().index.tolist()
+    category_color_map = plt.get_cmap("tab10")
+    category_colors = {
+        category_name: category_color_map(index % category_color_map.N)
+        for index, category_name in enumerate(ordered_categories)
+    }
+    highlight_colors = {
+        accession: DEFAULT_HIGHLIGHT_POINT_COLORS[index % len(DEFAULT_HIGHLIGHT_POINT_COLORS)]
+        for index, accession in enumerate(ordered_accessions)
+    }
+
+    for axis, row in zip(axes_flat, ordered_snapshots.itertuples(index=False)):
+        panel_df = snapshot_umap_df.loc[snapshot_umap_df["snapshot_order"].eq(int(row.snapshot_order))].copy()
+        panel_df[color_column] = panel_df[color_column].fillna("missing").map(str)
+        for category_name in ordered_categories:
+            category_df = panel_df.loc[panel_df[color_column].eq(category_name)]
+            if category_df.empty:
+                continue
+            axis.scatter(
+                category_df["umap_1"],
+                category_df["umap_2"],
+                s=14,
+                alpha=0.58,
+                color=category_colors[category_name],
+                edgecolors="none",
+                label=category_name,
+            )
+
+        highlight_df = panel_df.loc[panel_df[ACCESSION_COLUMN].fillna("").map(str).isin(ordered_accessions)].copy()
+        for highlight_row in highlight_df.itertuples(index=False):
+            accession = str(getattr(highlight_row, ACCESSION_COLUMN))
+            axis.scatter(
+                [float(highlight_row.umap_1)],
+                [float(highlight_row.umap_2)],
+                s=95,
+                color=highlight_colors.get(accession, "#111827"),
+                edgecolors="white",
+                linewidths=1.0,
+                zorder=4,
+            )
+            axis.text(
+                float(highlight_row.umap_1) + 0.15,
+                float(highlight_row.umap_2) + 0.15,
+                accession,
+                fontsize=9,
+                color=highlight_colors.get(accession, "#111827"),
+                weight="bold",
+                zorder=5,
+            )
+
+        axis.set_title(str(row.snapshot_label))
+        axis.set_xlabel("UMAP 1")
+        axis.set_ylabel("UMAP 2")
+        axis.grid(alpha=0.16)
+
+    for axis in axes_flat[num_panels:]:
+        axis.axis("off")
+
+    if ordered_categories:
+        handles = [
+            Line2D([0], [0], marker="o", linestyle="", markersize=8, markerfacecolor=category_colors[name], label=name)
+            for name in ordered_categories
+        ]
+        fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.02), ncol=min(4, len(handles)), frameon=False)
+
+    fig.suptitle(title, fontsize=16)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(output_path, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def _build_highlight_accession_positions_table(
+    snapshot_umap_df: pd.DataFrame,
+    highlight_accessions: Sequence[str] | None,
+) -> pd.DataFrame:
+    """Return one long table of shared-UMAP coordinates for highlighted glycans."""
+    ordered_accessions = _normalize_highlight_accessions(highlight_accessions)
+    if snapshot_umap_df.empty or not ordered_accessions:
+        return pd.DataFrame()
+
+    highlight_df = snapshot_umap_df.loc[
+        snapshot_umap_df[ACCESSION_COLUMN].fillna("").map(str).isin(ordered_accessions)
+    ].copy()
+    if highlight_df.empty:
+        return highlight_df
+
+    highlight_df["highlight_rank"] = highlight_df[ACCESSION_COLUMN].map(
+        lambda accession: ordered_accessions.index(str(accession))
+    )
+    highlight_df = highlight_df.sort_values(
+        ["highlight_rank", "snapshot_order", ACCESSION_COLUMN],
+        kind="stable",
+    ).reset_index(drop=True)
+    return _select_existing_columns(
+        highlight_df,
+        [
+            ACCESSION_COLUMN,
+            "sequence",
+            "split",
+            "primary_subtype_label",
+            "main_glycan_class",
+            "snapshot_label",
+            "snapshot_order",
+            "umap_1",
+            "umap_2",
+        ],
+    )
+
+
+def _build_highlight_similarity_table(
+    annotated_df: pd.DataFrame,
+    completed_run_specs: Sequence[Mapping[str, Any]],
+    row_embeddings_by_run_slug: Mapping[str, np.ndarray],
+    highlight_row_lookup: Mapping[str, int],
+) -> pd.DataFrame:
+    """Return pairwise cosine similarity rows for the highlighted glycans."""
+    if not highlight_row_lookup or not completed_run_specs:
+        return pd.DataFrame()
+
+    ordered_accessions = list(highlight_row_lookup)
+    similarity_rows: list[dict[str, Any]] = []
+    for run_spec in completed_run_specs:
+        run_slug = build_run_slug(run_spec)
+        row_embeddings = row_embeddings_by_run_slug[run_slug]
+        for accession_a, accession_b in combinations(ordered_accessions, 2):
+            index_a = int(highlight_row_lookup[accession_a])
+            index_b = int(highlight_row_lookup[accession_b])
+            cosine_similarity = float(np.dot(row_embeddings[index_a], row_embeddings[index_b]))
+            similarity_rows.append(
+                {
+                    "snapshot_label": str(run_spec.get("snapshot_label", "")),
+                    "snapshot_order": int(run_spec.get("snapshot_order", 0)),
+                    "display_label": str(run_spec.get("display_label", "")),
+                    "accession_a": accession_a,
+                    "accession_b": accession_b,
+                    "sequence_a": str(annotated_df.iloc[index_a][SEQUENCE_COLUMN]),
+                    "sequence_b": str(annotated_df.iloc[index_b][SEQUENCE_COLUMN]),
+                    "cosine_similarity": cosine_similarity,
+                }
+            )
+    return pd.DataFrame(similarity_rows).sort_values(
+        ["snapshot_order", "accession_a", "accession_b"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+
+def _build_highlight_neighbor_table(
+    annotated_df: pd.DataFrame,
+    completed_run_specs: Sequence[Mapping[str, Any]],
+    row_embeddings_by_run_slug: Mapping[str, np.ndarray],
+    highlight_row_lookup: Mapping[str, int],
+    *,
+    top_n: int = 10,
+) -> pd.DataFrame:
+    """Return the nearest saved neighbors for each highlighted glycan."""
+    if not highlight_row_lookup or not completed_run_specs:
+        return pd.DataFrame()
+
+    neighbor_rows: list[dict[str, Any]] = []
+    accession_series = annotated_df[ACCESSION_COLUMN].fillna("").map(str)
+    for run_spec in completed_run_specs:
+        run_slug = build_run_slug(run_spec)
+        row_embeddings = row_embeddings_by_run_slug[run_slug]
+        for accession, row_index in highlight_row_lookup.items():
+            query_embedding = row_embeddings[int(row_index)]
+            similarity_scores = row_embeddings @ query_embedding
+            ranking_indices = np.argsort(-similarity_scores)
+            kept_count = 0
+            for neighbor_index in ranking_indices:
+                neighbor_accession = str(accession_series.iloc[int(neighbor_index)])
+                if neighbor_accession == accession:
+                    continue
+                neighbor_row = annotated_df.iloc[int(neighbor_index)]
+                neighbor_rows.append(
+                    {
+                        "snapshot_label": str(run_spec.get("snapshot_label", "")),
+                        "snapshot_order": int(run_spec.get("snapshot_order", 0)),
+                        "query_accession": accession,
+                        "neighbor_rank": int(kept_count + 1),
+                        "neighbor_accession": neighbor_accession,
+                        "neighbor_sequence": str(neighbor_row[SEQUENCE_COLUMN]),
+                        "neighbor_split": str(neighbor_row[SPLIT_COLUMN]),
+                        "neighbor_main_glycan_class": str(neighbor_row.get("main_glycan_class", "")),
+                        "cosine_similarity": float(similarity_scores[int(neighbor_index)]),
+                    }
+                )
+                kept_count += 1
+                if kept_count >= int(top_n):
+                    break
+    return pd.DataFrame(neighbor_rows).sort_values(
+        ["snapshot_order", "query_accession", "neighbor_rank"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+
+def build_snapshot_progression_artifacts(
+    *,
+    annotated_df: pd.DataFrame,
+    run_specs: Sequence[Mapping[str, Any]],
+    output_paths: Mapping[str, Path],
+    row_embeddings_by_run_slug: Mapping[str, np.ndarray],
+    split_name: str = "test",
+    metrics_df: pd.DataFrame | None = None,
+    highlight_accessions: Sequence[str] | None = None,
+    highlight_neighbor_count: int = 10,
+    umap_neighbors: int = 15,
+    umap_min_dist: float = 0.10,
+    umap_metric: str = "cosine",
+    umap_random_state: int = 42,
+    umap_color_column: str = "main_glycan_class",
+) -> dict[str, Any]:
+    """Build the snapshot-progression plots and tables for notebook 14."""
+    completed_run_specs = [
+        run_spec
+        for run_spec in run_specs
+        if build_run_slug(run_spec) in row_embeddings_by_run_slug
+    ]
+    if not completed_run_specs:
+        return {
+            "snapshot_progression_plot_path": None,
+            "snapshot_umap_plot_path": None,
+            "snapshot_umap_df": pd.DataFrame(),
+            "highlight_positions_df": pd.DataFrame(),
+            "highlight_similarity_df": pd.DataFrame(),
+            "highlight_neighbors_df": pd.DataFrame(),
+        }
+
+    snapshot_progression_plot_path = None
+    if metrics_df is not None:
+        snapshot_progression_plot_path = _plot_snapshot_metric_progression(
+            metrics_df,
+            split_name=split_name,
+            output_path=output_paths["test_snapshot_progression_plot_path"],
+        )
+
+    snapshot_umap_df = _build_snapshot_umap_long_dataframe(
+        annotated_df,
+        completed_run_specs,
+        row_embeddings_by_run_slug,
+        umap_neighbors=umap_neighbors,
+        umap_min_dist=umap_min_dist,
+        umap_metric=umap_metric,
+        umap_random_state=umap_random_state,
+    )
+    snapshot_umap_df.to_csv(output_paths["snapshot_umap_coordinates_path"], index=False)
+    snapshot_umap_plot_path = _plot_snapshot_umap_grid(
+        snapshot_umap_df,
+        output_path=output_paths["snapshot_umap_plot_path"],
+        color_column=umap_color_column,
+        highlight_accessions=highlight_accessions,
+        title="Shared UMAP across saved snapshots",
+    )
+
+    _, highlight_row_lookup = _select_highlight_rows(annotated_df, highlight_accessions)
+    highlight_positions_df = _build_highlight_accession_positions_table(
+        snapshot_umap_df,
+        highlight_accessions,
+    )
+    highlight_similarity_df = _build_highlight_similarity_table(
+        annotated_df,
+        completed_run_specs,
+        row_embeddings_by_run_slug,
+        highlight_row_lookup,
+    )
+    highlight_neighbors_df = _build_highlight_neighbor_table(
+        annotated_df,
+        completed_run_specs,
+        row_embeddings_by_run_slug,
+        highlight_row_lookup,
+        top_n=highlight_neighbor_count,
+    )
+    highlight_positions_df.to_csv(output_paths["highlight_accession_table_path"], index=False)
+    highlight_similarity_df.to_csv(output_paths["highlight_similarity_table_path"], index=False)
+    highlight_neighbors_df.to_csv(output_paths["highlight_neighbor_table_path"], index=False)
+
+    return {
+        "snapshot_progression_plot_path": snapshot_progression_plot_path,
+        "snapshot_umap_plot_path": snapshot_umap_plot_path,
+        "snapshot_umap_df": snapshot_umap_df,
+        "highlight_positions_df": highlight_positions_df,
+        "highlight_similarity_df": highlight_similarity_df,
+        "highlight_neighbors_df": highlight_neighbors_df,
+    }
+
+
 def _render_dataframe_html(frame_df: pd.DataFrame) -> str:
     """Render one dataframe as a compact HTML table for saved reports."""
     if frame_df.empty:
@@ -1142,6 +1736,7 @@ def _build_public_manifest_table(manifest_df: pd.DataFrame) -> pd.DataFrame:
         [
             "display_label",
             "model_variant",
+            "snapshot_label",
             "model_dir_exists",
             "registry_run_status",
         ],
@@ -1155,6 +1750,7 @@ def _build_public_metric_summary_table(summary_df: pd.DataFrame) -> pd.DataFrame
         [
             "display_label",
             "model_variant",
+            "snapshot_label",
             "row_count",
             "positive_count",
             "roc_auc",
@@ -1253,6 +1849,7 @@ def render_embedding_logreg_html_report(
     skipped_df: pd.DataFrame,
     plot_paths: Mapping[str, Path],
     diagnostic_plot_paths: Mapping[str, Path | None],
+    snapshot_analysis: Mapping[str, Any] | None = None,
 ) -> Path:
     """Render a saved HTML report for one notebook-14 comparison run."""
     output_dir = Path(output_dir)
@@ -1276,6 +1873,7 @@ def render_embedding_logreg_html_report(
     public_manifest_df = _build_public_manifest_table(manifest_df)
     public_test_summary_df = _build_public_metric_summary_table(test_summary_df)
     public_skipped_df = _build_public_skipped_table(skipped_df)
+    snapshot_analysis = dict(snapshot_analysis or {})
     summary_cards_html = "".join(
         (
             "<div class='card'>"
@@ -1346,6 +1944,71 @@ def render_embedding_logreg_html_report(
             "<div class='table-wrap'>"
             f"{_render_dataframe_html(public_test_summary_df)}"
             "</div>"
+            "</section>"
+        )
+
+    snapshot_section_html = ""
+    snapshot_progression_plot_path = snapshot_analysis.get("snapshot_progression_plot_path")
+    snapshot_umap_plot_path = snapshot_analysis.get("snapshot_umap_plot_path")
+    highlight_positions_df = snapshot_analysis.get("highlight_positions_df", pd.DataFrame())
+    highlight_similarity_df = snapshot_analysis.get("highlight_similarity_df", pd.DataFrame())
+    highlight_neighbors_df = snapshot_analysis.get("highlight_neighbors_df", pd.DataFrame())
+    if snapshot_progression_plot_path or snapshot_umap_plot_path or not highlight_positions_df.empty:
+        snapshot_cards = "".join(
+            [
+                _render_plot_card(
+                    snapshot_progression_plot_path,
+                    title="Held-out test metric progression",
+                ),
+                _render_plot_card(
+                    snapshot_umap_plot_path,
+                    title="Shared UMAP with highlighted glycans",
+                ),
+            ]
+        )
+        highlight_positions_public_df = _select_existing_columns(
+            highlight_positions_df,
+            [
+                ACCESSION_COLUMN,
+                "sequence",
+                "split",
+                "main_glycan_class",
+                "snapshot_label",
+                "umap_1",
+                "umap_2",
+            ],
+        )
+        highlight_similarity_public_df = _select_existing_columns(
+            highlight_similarity_df,
+            [
+                "snapshot_label",
+                "accession_a",
+                "accession_b",
+                "cosine_similarity",
+            ],
+        )
+        highlight_neighbors_public_df = _select_existing_columns(
+            highlight_neighbors_df,
+            [
+                "snapshot_label",
+                "query_accession",
+                "neighbor_rank",
+                "neighbor_accession",
+                "neighbor_main_glycan_class",
+                "cosine_similarity",
+            ],
+        )
+        snapshot_section_html = (
+            "<section>"
+            "<h2>Snapshot progression</h2>"
+            "<p class='subtle'>These sections track how one model lineage changes across saved checkpoints using the held-out test probe and a shared UMAP projection.</p>"
+            f"<div class='plot-grid diagnostics-grid'>{snapshot_cards}</div>"
+            "<h3>Highlighted accession positions</h3>"
+            f"<div class='table-wrap'>{_render_dataframe_html(highlight_positions_public_df)}</div>"
+            "<h3>Highlighted accession pairwise similarity</h3>"
+            f"<div class='table-wrap'>{_render_dataframe_html(highlight_similarity_public_df)}</div>"
+            "<h3>Highlighted accession nearest neighbors</h3>"
+            f"<div class='table-wrap'>{_render_dataframe_html(highlight_neighbors_public_df)}</div>"
             "</section>"
         )
 
@@ -1487,12 +2150,12 @@ def render_embedding_logreg_html_report(
 	<body>
 	  <header>
 	    <h1>{escape(report_title)}</h1>
-	    <p class="subtle">
-	      This report fits each logistic-regression probe on the training split and
-	      compares the final held-out <code>test</code> performance across
-	      <code>pretrained_mlm</code>, <code>classification_mlm_init</code>, and
-	      <code>classification_random_init</code>.
-	    </p>
+		    <p class="subtle">
+		      This report fits each logistic-regression probe on the training split and
+		      compares the final held-out <code>test</code> performance across the
+		      requested saved embedding sources. When snapshot progression is enabled,
+		      the report also shows how one lineage changes across checkpoints.
+		    </p>
 	  </header>
   <main class="container">
     <section>
@@ -1513,17 +2176,18 @@ def render_embedding_logreg_html_report(
       <h2>Broad glycan-class counts</h2>
       <div class="table-wrap">{_render_dataframe_html(class_summary_df)}</div>
     </section>
-	    <section>
-	      <h2>Held-out test ranking</h2>
-	      <p class="subtle">This summarizes the held-out test ranking across the compared model states.</p>
-	      <div class="plot-grid">{metric_grid_cards_html}</div>
-	    </section>
-	    {test_diagnostic_section_html}
-	    {test_summary_section_html}
-	  </main>
-	</body>
-	</html>
-"""
+		    <section>
+		      <h2>Held-out test ranking</h2>
+		      <p class="subtle">This summarizes the held-out test ranking across the compared model states.</p>
+		      <div class="plot-grid">{metric_grid_cards_html}</div>
+		    </section>
+		    {test_diagnostic_section_html}
+		    {test_summary_section_html}
+            {snapshot_section_html}
+		  </main>
+		</body>
+		</html>
+	"""
     html_path.write_text(html, encoding="utf-8")
     return html_path
 
@@ -1706,11 +2370,17 @@ def build_metric_split_summary(metrics_df: pd.DataFrame, split_name: str) -> pd.
     if summary_df.empty:
         return summary_df
 
-    summary_df = summary_df.sort_values(
-        ["roc_auc", "average_precision", "f1", "balanced_accuracy"],
-        ascending=False,
-        kind="stable",
-    ).reset_index(drop=True)
+    if "snapshot_order" in summary_df.columns:
+        summary_df = summary_df.sort_values(
+            ["snapshot_order", "display_label"],
+            kind="stable",
+        ).reset_index(drop=True)
+    else:
+        summary_df = summary_df.sort_values(
+            ["roc_auc", "average_precision", "f1", "balanced_accuracy"],
+            ascending=False,
+            kind="stable",
+        ).reset_index(drop=True)
     return summary_df
 
 
@@ -1770,6 +2440,15 @@ def run_embedding_logreg_suite(
     metric_plot_names: Sequence[str] = ("roc_auc", "average_precision", "f1", "balanced_accuracy"),
     report_title: str = "N-glycan logistic-regression comparison",
     device: str | None = None,
+    collect_row_embeddings: bool = False,
+    build_snapshot_progression: bool = False,
+    highlight_accessions: Sequence[str] | None = None,
+    highlight_neighbor_count: int = 10,
+    umap_neighbors: int = 15,
+    umap_min_dist: float = 0.10,
+    umap_metric: str = "cosine",
+    umap_random_state: int = 42,
+    umap_color_column: str = "main_glycan_class",
 ) -> dict[str, Any]:
     """Run the notebook-14 embedding comparison end to end."""
     normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
@@ -1806,6 +2485,12 @@ def run_embedding_logreg_suite(
         "test_confusion_plot_path": output_paths["test_confusion_plot_path"],
         "val_probability_plot_path": output_paths["val_probability_plot_path"],
         "test_probability_plot_path": output_paths["test_probability_plot_path"],
+        "test_snapshot_progression_plot_path": output_paths["test_snapshot_progression_plot_path"],
+        "snapshot_umap_coordinates_path": output_paths["snapshot_umap_coordinates_path"],
+        "snapshot_umap_plot_path": output_paths["snapshot_umap_plot_path"],
+        "highlight_accession_table_path": output_paths["highlight_accession_table_path"],
+        "highlight_similarity_table_path": output_paths["highlight_similarity_table_path"],
+        "highlight_neighbor_table_path": output_paths["highlight_neighbor_table_path"],
         "html_report_path": output_paths["html_report_path"],
     }
     for run_spec in run_specs:
@@ -1832,6 +2517,7 @@ def run_embedding_logreg_suite(
     all_metric_rows: list[dict[str, Any]] = []
     all_prediction_frames: list[pd.DataFrame] = []
     skipped_rows: list[dict[str, Any]] = []
+    row_embeddings_by_run_slug: dict[str, np.ndarray] = {}
 
     for run_spec in run_specs:
         model_dir = resolve_run_model_dir_from_spec(
@@ -1861,6 +2547,9 @@ def run_embedding_logreg_suite(
             max_length=max_length,
             device=device,
         )
+        run_slug = build_run_slug(run_spec)
+        if collect_row_embeddings or build_snapshot_progression:
+            row_embeddings_by_run_slug[run_slug] = row_embeddings
         run_df = annotated_df.reset_index(drop=True).copy()
         train_mask = run_df[SPLIT_COLUMN].isin(train_splits)
         if not train_mask.any():
@@ -2001,6 +2690,24 @@ def run_embedding_logreg_suite(
         ),
     }
 
+    snapshot_analysis = {}
+    if build_snapshot_progression:
+        snapshot_analysis = build_snapshot_progression_artifacts(
+            annotated_df=annotated_df,
+            run_specs=run_specs,
+            output_paths=output_paths,
+            row_embeddings_by_run_slug=row_embeddings_by_run_slug,
+            split_name="test",
+            metrics_df=metrics_df,
+            highlight_accessions=highlight_accessions,
+            highlight_neighbor_count=highlight_neighbor_count,
+            umap_neighbors=umap_neighbors,
+            umap_min_dist=umap_min_dist,
+            umap_metric=umap_metric,
+            umap_random_state=umap_random_state,
+            umap_color_column=umap_color_column,
+        )
+
     html_report_path = render_embedding_logreg_html_report(
         output_dir=output_paths["results_dir"],
         report_title=report_title,
@@ -2013,6 +2720,7 @@ def run_embedding_logreg_suite(
         skipped_df=skipped_df,
         plot_paths=created_plot_paths,
         diagnostic_plot_paths=diagnostic_plot_paths,
+        snapshot_analysis=snapshot_analysis,
     )
 
     return {
@@ -2027,8 +2735,10 @@ def run_embedding_logreg_suite(
         "test_summary_df": split_summaries["test"],
         "plot_paths": created_plot_paths,
         "diagnostic_plot_paths": diagnostic_plot_paths,
+        "snapshot_analysis": snapshot_analysis,
         "html_report_path": html_report_path,
         "output_paths": dict(output_paths),
+        "row_embeddings_by_run_slug": row_embeddings_by_run_slug,
     }
 
 
