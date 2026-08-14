@@ -516,6 +516,8 @@ def build_snapshot_run_specs(
             {
                 **base_run_spec,
                 "model_dir": str(model_dir),
+                "comparison_axis_name": "snapshot",
+                "comparison_label": snapshot_label,
                 "snapshot_label": snapshot_label,
                 "snapshot_model_subdir": snapshot_model_subdir,
                 "snapshot_order": int(snapshot_order),
@@ -531,6 +533,101 @@ def build_snapshot_run_specs(
         )
 
     return snapshot_run_specs
+
+
+def _format_embedding_layer_label(embedding_layer_index: int) -> str:
+    """Return a notebook-friendly label for one requested embedding layer."""
+    normalized_index = normalize_embedding_layer_index(embedding_layer_index)
+    if normalized_index == 0:
+        return "Layer 0 (input embeddings)"
+    if normalized_index == -1:
+        return "Layer -1 (final layer)"
+    if normalized_index == -2:
+        return "Layer -2 (penultimate layer)"
+    return f"Layer {normalized_index}"
+
+
+def build_layer_run_specs(
+    registry_df: pd.DataFrame,
+    *,
+    checkpoints_dir: str | Path,
+    tokenizer_family: str,
+    experiment_name: str,
+    model_variant: str = "pretrained_mlm",
+    model_subdir: str = "best_model",
+    embedding_layer_indices: Sequence[int] = (0, -1),
+    classifier_mlm_run_label: str = "cls_lr2e-5_ep10_bs16_mlm",
+    classifier_random_run_label: str = "cls_lr2e-5_ep10_bs16_randominit",
+    only_fresh_runs: bool = True,
+    only_tested_runs: bool = True,
+) -> list[dict[str, Any]]:
+    """Build ordered run specs for one fixed model directory across embedding layers."""
+    normalized_variant = str(model_variant).strip()
+    if normalized_variant not in SUPPORTED_MODEL_VARIANTS:
+        raise ValueError(
+            f"Unsupported model_variant {model_variant!r}. "
+            f"Choose from {SUPPORTED_MODEL_VARIANTS}."
+        )
+
+    normalized_layer_indices: list[int] = []
+    for one_index in embedding_layer_indices:
+        normalized_index = normalize_embedding_layer_index(one_index)
+        if normalized_index in normalized_layer_indices:
+            continue
+        normalized_layer_indices.append(normalized_index)
+    if not normalized_layer_indices:
+        raise ValueError("At least one embedding layer index is required.")
+
+    row = resolve_single_registry_run(
+        registry_df,
+        tokenizer_family=tokenizer_family,
+        experiment_name=experiment_name,
+        only_fresh_runs=only_fresh_runs,
+        only_tested_runs=only_tested_runs,
+    )
+    base_run_spec = _build_one_registry_run_spec(
+        row,
+        model_variant=normalized_variant,
+        classifier_mlm_run_label=classifier_mlm_run_label,
+        classifier_random_run_label=classifier_random_run_label,
+    )
+    model_dir = resolve_embedding_model_dir(
+        checkpoints_dir=checkpoints_dir,
+        tokenizer_family=tokenizer_family,
+        experiment_name=experiment_name,
+        model_variant=normalized_variant,
+        classifier_mlm_run_label=classifier_mlm_run_label,
+        classifier_random_run_label=classifier_random_run_label,
+        model_subdir=model_subdir,
+    )
+
+    layer_run_specs: list[dict[str, Any]] = []
+    for layer_order, layer_index in enumerate(normalized_layer_indices):
+        layer_label = _format_embedding_layer_label(layer_index)
+        layer_run_specs.append(
+            {
+                **base_run_spec,
+                "model_dir": str(model_dir),
+                "model_subdir": str(model_subdir),
+                "comparison_axis_name": "layer",
+                "comparison_label": layer_label,
+                "layer_label": layer_label,
+                "embedding_layer_index": int(layer_index),
+                "snapshot_label": layer_label,
+                "snapshot_model_subdir": str(model_subdir),
+                "snapshot_order": int(layer_order),
+                "display_label": (
+                    f"{MODEL_VARIANT_LABELS.get(normalized_variant, normalized_variant)}"
+                    f" | {layer_label}"
+                ),
+                "comparison_group_label": (
+                    f"{tokenizer_family} | {base_run_spec['architecture_label']} | "
+                    f"{MODEL_VARIANT_LABELS.get(normalized_variant, normalized_variant)} | {model_subdir}"
+                ),
+            }
+        )
+
+    return layer_run_specs
 
 
 def build_embedding_logreg_output_paths(
@@ -660,7 +757,8 @@ def build_embedding_logreg_run_config(
     classification_prep_dir: str | Path,
     checkpoints_dir: str | Path,
     pooling_strategy: str,
-    embedding_layer_index: int,
+    embedding_layer_index: int | None,
+    embedding_layer_indices: Sequence[int] | None = None,
     splits_to_include: Sequence[str],
     train_splits: Sequence[str],
     evaluation_splits: Sequence[str],
@@ -682,7 +780,14 @@ def build_embedding_logreg_run_config(
         "classification_prep_dir": str(classification_prep_dir),
         "checkpoints_dir": str(checkpoints_dir),
         "pooling_strategy": str(pooling_strategy),
-        "embedding_layer_index": int(embedding_layer_index),
+        "embedding_layer_index": (
+            int(embedding_layer_index) if embedding_layer_index is not None else None
+        ),
+        "embedding_layer_indices": (
+            [int(layer_index) for layer_index in embedding_layer_indices]
+            if embedding_layer_indices is not None
+            else None
+        ),
         "splits_to_include": [str(split_name) for split_name in splits_to_include],
         "train_splits": [str(split_name) for split_name in train_splits],
         "evaluation_splits": [str(split_name) for split_name in evaluation_splits],
@@ -734,9 +839,13 @@ def build_run_slug(run_spec: Mapping[str, Any]) -> str:
         _slugify_text(run_spec["experiment_name"]),
         _slugify_text(run_spec["model_variant"]),
     ]
-    snapshot_label = str(run_spec.get("snapshot_label", "")).strip()
-    if snapshot_label:
-        slug_parts.append(_slugify_text(snapshot_label))
+    comparison_label = (
+        str(run_spec.get("comparison_label", "")).strip()
+        or str(run_spec.get("layer_label", "")).strip()
+        or str(run_spec.get("snapshot_label", "")).strip()
+    )
+    if comparison_label:
+        slug_parts.append(_slugify_text(comparison_label))
     return "__".join(slug_parts)
 
 
@@ -1300,8 +1409,12 @@ def _plot_snapshot_metric_progression(
     if plot_df.empty or "snapshot_order" not in plot_df.columns:
         return None
 
+    axis_name = "layer" if "layer_label" in plot_df.columns and plot_df["layer_label"].fillna("").map(str).str.strip().any() else "snapshot"
+    axis_label_column = "layer_label" if axis_name == "layer" and "layer_label" in plot_df.columns else "snapshot_label"
+    axis_title = "Embedding layer" if axis_name == "layer" else "Snapshot"
+    axis_title_plural = "embedding layers" if axis_name == "layer" else "snapshots"
     plot_df["snapshot_order"] = plot_df["snapshot_order"].astype(int)
-    plot_df["snapshot_label"] = plot_df["snapshot_label"].fillna("").map(str)
+    plot_df[axis_label_column] = plot_df[axis_label_column].fillna("").map(str)
     plot_df = plot_df.sort_values(["comparison_group_label", "snapshot_order", "display_label"], kind="stable")
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1327,15 +1440,15 @@ def _plot_snapshot_metric_progression(
                 label=group_name,
             )
         axis.set_ylabel(metric_name)
-        axis.set_title(f"{split_name.title()} {metric_name} across snapshots")
+        axis.set_title(f"{split_name.title()} {metric_name} across {axis_title_plural}")
         axis.grid(alpha=0.18)
         if metric_name in PLOT_UNIT_INTERVAL_METRICS:
             axis.set_ylim(0.0, 1.0)
 
     tick_df = plot_df.sort_values("snapshot_order", kind="stable").drop_duplicates("snapshot_order")
     axes[-1].set_xticks(tick_df["snapshot_order"].to_list())
-    axes[-1].set_xticklabels(tick_df["snapshot_label"].to_list(), rotation=25, ha="right")
-    axes[-1].set_xlabel("Snapshot")
+    axes[-1].set_xticklabels(tick_df[axis_label_column].to_list(), rotation=25, ha="right")
+    axes[-1].set_xlabel(axis_title)
     if len(group_values) > 1:
         axes[0].legend(loc="lower right", frameon=False)
     fig.tight_layout()
@@ -1415,6 +1528,10 @@ def _build_snapshot_umap_long_dataframe(
         snapshot_df["display_label"] = str(run_spec.get("display_label", ""))
         snapshot_df["model_variant"] = str(run_spec.get("model_variant", ""))
         snapshot_df["snapshot_label"] = str(run_spec.get("snapshot_label", ""))
+        snapshot_df["comparison_label"] = str(run_spec.get("comparison_label", run_spec.get("snapshot_label", "")))
+        snapshot_df["layer_label"] = str(run_spec.get("layer_label", ""))
+        snapshot_df["comparison_axis_name"] = str(run_spec.get("comparison_axis_name", "snapshot"))
+        snapshot_df["embedding_layer_index"] = run_spec.get("embedding_layer_index")
         snapshot_df["snapshot_order"] = int(run_spec.get("snapshot_order", 0))
         duplicate_source_slug = duplicate_snapshot_lookup.get(run_slug, "")
         duplicate_source_label = ""
@@ -1586,6 +1703,9 @@ def _build_highlight_accession_positions_table(
             "split",
             "primary_subtype_label",
             "main_glycan_class",
+            "comparison_label",
+            "layer_label",
+            "embedding_layer_index",
             "snapshot_label",
             "snapshot_order",
             "umap_1",
@@ -1615,6 +1735,9 @@ def _build_highlight_similarity_table(
             cosine_similarity = float(np.dot(row_embeddings[index_a], row_embeddings[index_b]))
             similarity_rows.append(
                 {
+                    "comparison_label": str(run_spec.get("comparison_label", run_spec.get("snapshot_label", ""))),
+                    "layer_label": str(run_spec.get("layer_label", "")),
+                    "embedding_layer_index": run_spec.get("embedding_layer_index"),
                     "snapshot_label": str(run_spec.get("snapshot_label", "")),
                     "snapshot_order": int(run_spec.get("snapshot_order", 0)),
                     "display_label": str(run_spec.get("display_label", "")),
@@ -1660,6 +1783,9 @@ def _build_highlight_neighbor_table(
                 neighbor_row = annotated_df.iloc[int(neighbor_index)]
                 neighbor_rows.append(
                     {
+                        "comparison_label": str(run_spec.get("comparison_label", run_spec.get("snapshot_label", ""))),
+                        "layer_label": str(run_spec.get("layer_label", "")),
+                        "embedding_layer_index": run_spec.get("embedding_layer_index"),
                         "snapshot_label": str(run_spec.get("snapshot_label", "")),
                         "snapshot_order": int(run_spec.get("snapshot_order", 0)),
                         "query_accession": accession,
@@ -1702,6 +1828,9 @@ def build_snapshot_progression_artifacts(
         for run_spec in run_specs
         if build_run_slug(run_spec) in row_embeddings_by_run_slug
     ]
+    comparison_axis_name = str(completed_run_specs[0].get("comparison_axis_name", "snapshot")) if completed_run_specs else "snapshot"
+    comparison_title = "Embedding layer" if comparison_axis_name == "layer" else "Saved snapshot"
+    comparison_title_plural = "embedding layers" if comparison_axis_name == "layer" else "saved snapshots"
     if not completed_run_specs:
         return {
             "snapshot_progression_plot_path": None,
@@ -1735,7 +1864,7 @@ def build_snapshot_progression_artifacts(
         output_path=output_paths["snapshot_umap_plot_path"],
         color_column=umap_color_column,
         highlight_accessions=highlight_accessions,
-        title="Shared UMAP across saved snapshots",
+        title=f"Shared UMAP across compared {comparison_title_plural}",
     )
 
     _, highlight_row_lookup = _select_highlight_rows(annotated_df, highlight_accessions)
@@ -1767,6 +1896,9 @@ def build_snapshot_progression_artifacts(
         "highlight_positions_df": highlight_positions_df,
         "highlight_similarity_df": highlight_similarity_df,
         "highlight_neighbors_df": highlight_neighbors_df,
+        "comparison_axis_name": comparison_axis_name,
+        "comparison_title": comparison_title,
+        "comparison_title_plural": comparison_title_plural,
     }
 
 
@@ -1792,6 +1924,9 @@ def _build_public_manifest_table(manifest_df: pd.DataFrame) -> pd.DataFrame:
         [
             "display_label",
             "model_variant",
+            "comparison_label",
+            "layer_label",
+            "embedding_layer_index",
             "snapshot_label",
             "model_dir_exists",
             "registry_run_status",
@@ -1806,6 +1941,9 @@ def _build_public_metric_summary_table(summary_df: pd.DataFrame) -> pd.DataFrame
         [
             "display_label",
             "model_variant",
+            "comparison_label",
+            "layer_label",
+            "embedding_layer_index",
             "snapshot_label",
             "row_count",
             "positive_count",
@@ -1930,6 +2068,15 @@ def render_embedding_logreg_html_report(
     public_test_summary_df = _build_public_metric_summary_table(test_summary_df)
     public_skipped_df = _build_public_skipped_table(skipped_df)
     snapshot_analysis = dict(snapshot_analysis or {})
+    comparison_axis_name = str(snapshot_analysis.get("comparison_axis_name", "")).strip()
+    if not comparison_axis_name:
+        comparison_axis_name = (
+            "layer"
+            if "layer_label" in manifest_df.columns and manifest_df["layer_label"].fillna("").map(str).str.strip().any()
+            else "snapshot"
+        )
+    comparison_title = "Embedding layer" if comparison_axis_name == "layer" else "Snapshot"
+    comparison_title_plural = "embedding layers" if comparison_axis_name == "layer" else "snapshots"
     summary_cards_html = "".join(
         (
             "<div class='card'>"
@@ -1949,8 +2096,8 @@ def render_embedding_logreg_html_report(
     if not public_skipped_df.empty:
         skipped_callout_html = (
             "<section class='callout warn'>"
-            "<h2>Checkpoint warning</h2>"
-            "<p>At least one requested model state did not resolve to a saved checkpoint folder. "
+            f"<h2>{escape(comparison_title)} warning</h2>"
+            "<p>At least one requested model state did not resolve to a saved model folder. "
             "That state is excluded from the comparison plots below.</p>"
             f"<div class='table-wrap'>{_render_dataframe_html(public_skipped_df)}</div>"
             "</section>"
@@ -2014,11 +2161,11 @@ def render_embedding_logreg_html_report(
             [
                 _render_plot_card(
                     snapshot_progression_plot_path,
-                    title="Held-out test metric progression",
+                    title=f"Held-out test {comparison_axis_name} progression",
                 ),
                 _render_plot_card(
                     snapshot_umap_plot_path,
-                    title="Shared UMAP with highlighted glycans",
+                    title=f"Shared UMAP across compared {comparison_title_plural}",
                 ),
             ]
         )
@@ -2029,6 +2176,9 @@ def render_embedding_logreg_html_report(
                 "sequence",
                 "split",
                 "main_glycan_class",
+                "comparison_label",
+                "layer_label",
+                "embedding_layer_index",
                 "snapshot_label",
                 "umap_1",
                 "umap_2",
@@ -2037,6 +2187,9 @@ def render_embedding_logreg_html_report(
         highlight_similarity_public_df = _select_existing_columns(
             highlight_similarity_df,
             [
+                "comparison_label",
+                "layer_label",
+                "embedding_layer_index",
                 "snapshot_label",
                 "accession_a",
                 "accession_b",
@@ -2046,6 +2199,9 @@ def render_embedding_logreg_html_report(
         highlight_neighbors_public_df = _select_existing_columns(
             highlight_neighbors_df,
             [
+                "comparison_label",
+                "layer_label",
+                "embedding_layer_index",
                 "snapshot_label",
                 "query_accession",
                 "neighbor_rank",
@@ -2056,8 +2212,8 @@ def render_embedding_logreg_html_report(
         )
         snapshot_section_html = (
             "<section>"
-            "<h2>Snapshot progression</h2>"
-            "<p class='subtle'>These sections track how one model lineage changes across saved checkpoints using the held-out test probe and a shared UMAP projection.</p>"
+            f"<h2>{escape(comparison_title)} comparison</h2>"
+            f"<p class='subtle'>These sections track how one model state changes across compared {escape(comparison_title_plural)} using the held-out test probe and a shared UMAP projection.</p>"
             f"<div class='plot-grid diagnostics-grid'>{snapshot_cards}</div>"
             "<h3>Highlighted accession positions</h3>"
             f"<div class='table-wrap'>{_render_dataframe_html(highlight_positions_public_df)}</div>"
@@ -2480,7 +2636,7 @@ def run_embedding_logreg_suite(
     checkpoints_dir: str | Path,
     output_paths: Mapping[str, Path],
     pooling_strategy: str = "mean",
-    embedding_layer_index: int = -1,
+    embedding_layer_index: int | None = None,
     batch_size: int = 32,
     max_length: int | None = None,
     train_splits: Sequence[str] = ("train",),
@@ -2594,11 +2750,14 @@ def run_embedding_logreg_suite(
 
         # Reuse one row-aligned embedding matrix for every split in this run so
         # the train/val/test probe comparison reflects one consistent model state.
+        run_embedding_layer_index = normalize_embedding_layer_index(
+            run_spec.get("embedding_layer_index", normalized_embedding_layer_index)
+        )
         row_embeddings = _build_row_embedding_matrix(
             annotated_df=annotated_df,
             model_dir=model_dir,
             pooling_strategy=normalized_pooling_strategy,
-            embedding_layer_index=normalized_embedding_layer_index,
+            embedding_layer_index=run_embedding_layer_index,
             batch_size=batch_size,
             max_length=max_length,
             device=device,
