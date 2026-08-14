@@ -33,6 +33,12 @@ SEQUENCE_COLUMN = "sequence"
 SPLIT_COLUMN = "split"
 LABEL_JSON_COLUMN = "labels_json"
 LABEL_LIST_COLUMN = "labels"
+NUM_LABELS_COLUMN = "num_labels"
+HAS_MULTIPLE_LABELS_COLUMN = "has_multiple_labels"
+PRIMARY_SUBTYPE_LABEL_COLUMN = "primary_subtype_label"
+N_O_CATEGORY_COLUMN = "n_o_category"
+MAIN_GLYCAN_CLASS_COLUMN = "main_glycan_class"
+LABEL_SIGNATURE_COLUMN = "label_signature"
 
 STRUCTURAL_CLASS_COLUMN = "structural_n_glycan_class"
 STRUCTURAL_BINARY_COLUMN = "structural_is_n_glycan"
@@ -51,6 +57,18 @@ CURRENT_PRIMARY_SUBTYPE_COLUMN = "current_primary_subtype_label"
 CURRENT_SUBCLASS_COLUMN = "current_n_glycan_subclass_label"
 CURRENT_SUBCLASS_MATCH_COUNT_COLUMN = "current_n_glycan_subclass_match_count"
 CURRENT_LABEL_SIGNATURE_COLUMN = "current_label_signature"
+PROBE_TARGET_COLUMN = "probe_target_code"
+PROBE_TARGET_LABEL_COLUMN = "probe_target_label"
+PROBE_TARGET_KIND_COLUMN = "probe_target_kind"
+PROBE_TARGET_NAME_COLUMN = "probe_target_name"
+PROBE_LABEL_SOURCE_COLUMN = "probe_label_source"
+PROBE_EDGE_CASE_REASON_COLUMN = "probe_exclusion_reason"
+PROBE_IS_KEPT_COLUMN = "is_kept_for_probe"
+N_GLYCAN_SUBCLASS_COLUMN = "n_glycan_subclass_label"
+N_GLYCAN_SUBCLASS_MATCHES_COLUMN = "n_glycan_subclass_matches"
+N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN = "n_glycan_subclass_match_count"
+LABEL_COMPATIBILITY_GROUP_COLUMN = "label_compatibility_group"
+LABEL_COMPATIBILITY_DETAIL_COLUMN = "label_compatibility_detail"
 
 STRUCTURAL_CLASS_ORDER = (
     "not_n_glycan",
@@ -68,6 +86,21 @@ STRUCTURAL_SUBCLASS_ORDER = (
     "Paucimannose/truncated",
     "Unresolved N-glycan",
 )
+LABEL_COMPATIBILITY_GROUP_ORDER = (
+    "compatible_agreement",
+    "compatible_refinement",
+    "recovered_missing_or_incomplete_current_label",
+    "ambiguous_current_reference_requires_review",
+    "true_contradiction",
+)
+STRUCTURAL_SUPPORTED_PROBE_SUBCLASS_ORDER = (
+    "High mannose",
+    "Complex",
+    "Hybrid",
+)
+STRUCTURAL_LABEL_SOURCE_NAME = "structural_rule_labels"
+STRUCTURAL_BINARY_TARGET_NAME = "Structural N-glycan vs other"
+STRUCTURAL_SUBCLASS_TARGET_NAME = "Structural N-glycan subclass probe"
 
 N_GLYCAN_SUBCLASS_KEYWORDS = {
     "High mannose": ("high mannose", "high-mannose"),
@@ -122,6 +155,27 @@ RESIDUE_PATTERN = re.compile(
 )
 ROOT_ANOMER_PATTERN = re.compile(r"(?<=[A-Za-z0-9,?])[ab?](?=[()+\[\]]|$)")
 SIMPLE_MODIFICATION_PATTERN = re.compile(r"(?:\d+[A-Za-z]{1,6}|[A-Za-z]{1,6})")
+STRUCTURAL_CLASS_TO_BINARY_LABEL = {
+    "not_n_glycan": "Not N-glycan",
+    "n_glycan_high_mannose": "N-glycan",
+    "n_glycan_hybrid": "N-glycan",
+    "n_glycan_complex": "N-glycan",
+    "n_glycan_paucimannose_or_truncated": "N-glycan",
+    "n_glycan_unresolved": "N-glycan",
+}
+STRUCTURAL_CLASS_TO_MAIN_CLASS = {
+    "not_n_glycan": "Not structurally N-glycan",
+    "n_glycan_high_mannose": "N-glycan",
+    "n_glycan_hybrid": "N-glycan",
+    "n_glycan_complex": "N-glycan",
+    "n_glycan_paucimannose_or_truncated": "N-glycan",
+    "n_glycan_unresolved": "N-glycan",
+}
+STRUCTURAL_CLASS_TO_SUBCLASS_MATCHES = {
+    "n_glycan_high_mannose": ["High mannose"],
+    "n_glycan_complex": ["Complex"],
+    "n_glycan_hybrid": ["Hybrid"],
+}
 
 
 @dataclass(frozen=True)
@@ -265,6 +319,10 @@ def annotate_current_label_views(classification_df: pd.DataFrame) -> pd.DataFram
     """Add the broad current-label views used for structural evaluation."""
 
     annotated_df = classification_df.copy()
+    annotated_df[NUM_LABELS_COLUMN] = annotated_df[LABEL_LIST_COLUMN].map(
+        lambda values: len(values) if isinstance(values, list) else 0
+    )
+    annotated_df[HAS_MULTIPLE_LABELS_COLUMN] = annotated_df[NUM_LABELS_COLUMN].gt(1)
     annotated_df[CURRENT_PRIMARY_SUBTYPE_COLUMN] = annotated_df[LABEL_LIST_COLUMN].map(
         lambda values: sorted(str(value).strip() for value in values if str(value).strip())[0]
         if isinstance(values, list) and values
@@ -280,7 +338,337 @@ def annotate_current_label_views(classification_df: pd.DataFrame) -> pd.DataFram
     subclass_matches = annotated_df[LABEL_LIST_COLUMN].map(_infer_existing_n_glycan_subclass_matches)
     annotated_df[CURRENT_SUBCLASS_MATCH_COUNT_COLUMN] = subclass_matches.map(len)
     annotated_df[CURRENT_SUBCLASS_COLUMN] = subclass_matches.map(lambda values: values[0] if len(values) == 1 else "")
+    annotated_df[PRIMARY_SUBTYPE_LABEL_COLUMN] = annotated_df[CURRENT_PRIMARY_SUBTYPE_COLUMN]
+    annotated_df[N_O_CATEGORY_COLUMN] = annotated_df[CURRENT_N_O_CATEGORY_COLUMN]
+    annotated_df[MAIN_GLYCAN_CLASS_COLUMN] = annotated_df[CURRENT_MAIN_CLASS_COLUMN]
+    annotated_df[LABEL_SIGNATURE_COLUMN] = annotated_df[CURRENT_LABEL_SIGNATURE_COLUMN]
     return annotated_df
+
+
+def _build_structural_probe_full_dataframe(annotated_df: pd.DataFrame) -> pd.DataFrame:
+    """Return one structural-label dataframe in the column shape notebook 14 expects."""
+
+    structural_df = annotated_df.copy()
+    structural_df[MAIN_GLYCAN_CLASS_COLUMN] = structural_df[STRUCTURAL_CLASS_COLUMN].map(
+        lambda class_name: STRUCTURAL_CLASS_TO_MAIN_CLASS.get(str(class_name), "Not structurally N-glycan")
+    )
+    structural_df[N_O_CATEGORY_COLUMN] = structural_df[STRUCTURAL_CLASS_COLUMN].map(
+        lambda class_name: STRUCTURAL_CLASS_TO_BINARY_LABEL.get(str(class_name), "Not N-glycan")
+    )
+    structural_df[PRIMARY_SUBTYPE_LABEL_COLUMN] = structural_df[STRUCTURAL_SUBCLASS_COLUMN].fillna("").map(str)
+    structural_df[LABEL_SIGNATURE_COLUMN] = structural_df[STRUCTURAL_CLASS_COLUMN].fillna("").map(str)
+    structural_df["structural_binary_disagrees_with_current"] = (
+        structural_df[STRUCTURAL_BINARY_COLUMN].fillna(False).astype(bool)
+        != structural_df[CURRENT_MAIN_CLASS_COLUMN].eq("N-glycan")
+    )
+    structural_df["current_is_unlabeled_reference"] = structural_df[NUM_LABELS_COLUMN].eq(0)
+    structural_df["current_is_mixed_n_o_reference"] = structural_df[CURRENT_N_O_CATEGORY_COLUMN].eq("Mixed N/O")
+    structural_df[N_GLYCAN_SUBCLASS_COLUMN] = structural_df[STRUCTURAL_SUBCLASS_COLUMN].map(
+        lambda label_name: str(label_name).strip()
+        if str(label_name).strip() in STRUCTURAL_SUPPORTED_PROBE_SUBCLASS_ORDER
+        else ""
+    )
+    structural_df[N_GLYCAN_SUBCLASS_MATCHES_COLUMN] = structural_df[STRUCTURAL_CLASS_COLUMN].map(
+        lambda class_name: list(STRUCTURAL_CLASS_TO_SUBCLASS_MATCHES.get(str(class_name), []))
+    )
+    structural_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN] = structural_df[N_GLYCAN_SUBCLASS_MATCHES_COLUMN].map(len)
+    structural_df[PROBE_LABEL_SOURCE_COLUMN] = STRUCTURAL_LABEL_SOURCE_NAME
+    structural_df[PROBE_IS_KEPT_COLUMN] = False
+    structural_df[PROBE_EDGE_CASE_REASON_COLUMN] = ""
+    return structural_df
+
+
+def _append_reason(existing_reason: str, new_reason: str) -> str:
+    """Join one additional edge-case reason onto an existing reason string."""
+
+    existing_text = str(existing_reason).strip()
+    new_text = str(new_reason).strip()
+    if not new_text:
+        return existing_text
+    if not existing_text:
+        return new_text
+    existing_parts = [part.strip() for part in existing_text.split(" | ") if part.strip()]
+    if new_text in existing_parts:
+        return existing_text
+    return f"{existing_text} | {new_text}"
+
+
+def _append_reason_series(reason_series: pd.Series, mask: pd.Series, reason_text: str) -> pd.Series:
+    """Append one reason to each row selected by the boolean mask."""
+
+    updated_series = reason_series.copy()
+    updated_series.loc[mask] = updated_series.loc[mask].map(
+        lambda existing_reason: _append_reason(existing_reason, reason_text)
+    )
+    return updated_series
+
+
+def _build_structural_binary_probe_tables(full_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Return notebook-14-ready binary probe tables from the structural annotations."""
+
+    probe_df = full_df.copy()
+    probe_df[PROBE_TARGET_COLUMN] = probe_df[STRUCTURAL_BINARY_COLUMN].astype(int)
+    probe_df[PROBE_TARGET_LABEL_COLUMN] = probe_df[STRUCTURAL_CLASS_COLUMN].map(
+        lambda class_name: STRUCTURAL_CLASS_TO_BINARY_LABEL.get(str(class_name), "Not N-glycan")
+    )
+    probe_df[PROBE_TARGET_KIND_COLUMN] = "binary"
+    probe_df[PROBE_TARGET_NAME_COLUMN] = STRUCTURAL_BINARY_TARGET_NAME
+    probe_df[PROBE_IS_KEPT_COLUMN] = True
+
+    detail_df = full_df.copy()
+    detail_df[PROBE_IS_KEPT_COLUMN] = True
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = detail_df[PROBE_EDGE_CASE_REASON_COLUMN].fillna("").map(str)
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df["current_is_unlabeled_reference"],
+        "current_unlabeled_reference",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df[HAS_MULTIPLE_LABELS_COLUMN],
+        "current_multiple_labels_reference",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df["current_is_mixed_n_o_reference"],
+        "current_mixed_n_o_reference",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df[STRUCTURAL_CLASS_COLUMN].eq("n_glycan_paucimannose_or_truncated"),
+        "structural_paucimannose_or_truncated",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df[STRUCTURAL_CLASS_COLUMN].eq("n_glycan_unresolved"),
+        "structural_unresolved_n_glycan",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df["structural_binary_disagrees_with_current"],
+        "structural_binary_disagrees_with_current_reference",
+    )
+    detail_df = detail_df.loc[detail_df[PROBE_EDGE_CASE_REASON_COLUMN].ne("")].copy()
+
+    summary_rows: list[dict[str, object]] = []
+    for split_name in ("all", "train", "val", "test"):
+        if split_name == "all":
+            split_full_df = full_df.copy()
+            split_probe_df = probe_df.copy()
+        else:
+            split_full_df = full_df.loc[full_df[SPLIT_COLUMN].map(str).eq(split_name)].copy()
+            split_probe_df = probe_df.loc[probe_df[SPLIT_COLUMN].map(str).eq(split_name)].copy()
+        metric_rows = [
+            ("rows_available_after_split_filter", len(split_full_df)),
+            ("rows_kept_for_probe", len(split_probe_df)),
+            ("structural_n_glycan_rows", int(split_full_df[STRUCTURAL_BINARY_COLUMN].sum())),
+            ("structural_not_n_glycan_rows", int((~split_full_df[STRUCTURAL_BINARY_COLUMN].astype(bool)).sum())),
+            (
+                "structural_paucimannose_or_truncated_rows",
+                int(split_full_df[STRUCTURAL_CLASS_COLUMN].eq("n_glycan_paucimannose_or_truncated").sum()),
+            ),
+            (
+                "structural_unresolved_n_glycan_rows",
+                int(split_full_df[STRUCTURAL_CLASS_COLUMN].eq("n_glycan_unresolved").sum()),
+            ),
+            ("current_unlabeled_rows_reference", int(split_full_df["current_is_unlabeled_reference"].sum())),
+            ("current_rows_with_multiple_labels_reference", int(split_full_df[HAS_MULTIPLE_LABELS_COLUMN].sum())),
+            ("current_mixed_n_o_rows_reference", int(split_full_df["current_is_mixed_n_o_reference"].sum())),
+            (
+                "structural_binary_disagreement_with_current_rows_reference",
+                int(split_full_df["structural_binary_disagrees_with_current"].sum()),
+            ),
+        ]
+        for metric_name, metric_value in metric_rows:
+            summary_rows.append(
+                {
+                    "split": split_name,
+                    "edge_case_metric": str(metric_name),
+                    "count": int(metric_value),
+                }
+            )
+
+    return {
+        "probe_df": probe_df.reset_index(drop=True),
+        "edge_case_summary_df": pd.DataFrame(summary_rows),
+        "edge_case_detail_df": _select_existing_columns(
+            detail_df.reset_index(drop=True),
+            [
+                SPLIT_COLUMN,
+                ACCESSION_COLUMN,
+                SEQUENCE_COLUMN,
+                MAIN_GLYCAN_CLASS_COLUMN,
+                N_O_CATEGORY_COLUMN,
+                NUM_LABELS_COLUMN,
+                HAS_MULTIPLE_LABELS_COLUMN,
+                LABEL_SIGNATURE_COLUMN,
+                CURRENT_MAIN_CLASS_COLUMN,
+                CURRENT_N_O_CATEGORY_COLUMN,
+                CURRENT_LABEL_SIGNATURE_COLUMN,
+                CURRENT_SUBCLASS_COLUMN,
+                STRUCTURAL_CLASS_COLUMN,
+                STRUCTURAL_SUBCLASS_COLUMN,
+                PROBE_IS_KEPT_COLUMN,
+                PROBE_EDGE_CASE_REASON_COLUMN,
+            ],
+        ),
+    }
+
+
+def _build_structural_subclass_probe_tables(full_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Return notebook-14-ready structural three-class subclass probe tables."""
+
+    subclass_code_lookup = {
+        subclass_name: subclass_index
+        for subclass_index, subclass_name in enumerate(STRUCTURAL_SUPPORTED_PROBE_SUBCLASS_ORDER)
+    }
+
+    probe_df = full_df.loc[
+        full_df[STRUCTURAL_CLASS_COLUMN].isin(
+            {"n_glycan_high_mannose", "n_glycan_complex", "n_glycan_hybrid"}
+        )
+    ].copy()
+    probe_df[PROBE_TARGET_LABEL_COLUMN] = probe_df[N_GLYCAN_SUBCLASS_COLUMN].map(str)
+    probe_df[PROBE_TARGET_COLUMN] = probe_df[PROBE_TARGET_LABEL_COLUMN].map(subclass_code_lookup).astype(int)
+    probe_df[PROBE_TARGET_KIND_COLUMN] = "multiclass"
+    probe_df[PROBE_TARGET_NAME_COLUMN] = STRUCTURAL_SUBCLASS_TARGET_NAME
+    probe_df[PROBE_IS_KEPT_COLUMN] = True
+
+    detail_df = full_df.copy()
+    kept_keys = set(
+        zip(
+            probe_df[ACCESSION_COLUMN].fillna("").map(str),
+            probe_df[SEQUENCE_COLUMN].fillna("").map(str),
+            probe_df[SPLIT_COLUMN].fillna("").map(str),
+        )
+    )
+    detail_df[PROBE_IS_KEPT_COLUMN] = [
+        (str(accession), str(sequence), str(split_name)) in kept_keys
+        for accession, sequence, split_name in zip(
+            detail_df[ACCESSION_COLUMN].fillna("").map(str),
+            detail_df[SEQUENCE_COLUMN].fillna("").map(str),
+            detail_df[SPLIT_COLUMN].fillna("").map(str),
+        )
+    ]
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = detail_df[PROBE_EDGE_CASE_REASON_COLUMN].fillna("").map(str)
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df[STRUCTURAL_CLASS_COLUMN].eq("not_n_glycan"),
+        "not_structural_n_glycan_row",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df[STRUCTURAL_CLASS_COLUMN].eq("n_glycan_paucimannose_or_truncated"),
+        "structural_paucimannose_or_truncated",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df[STRUCTURAL_CLASS_COLUMN].eq("n_glycan_unresolved"),
+        "structural_unresolved_n_glycan",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df["current_is_unlabeled_reference"],
+        "current_unlabeled_reference",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df[HAS_MULTIPLE_LABELS_COLUMN],
+        "current_multiple_labels_reference",
+    )
+    detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+        detail_df["current_is_mixed_n_o_reference"],
+        "current_mixed_n_o_reference",
+    )
+    detail_df = detail_df.loc[
+        (~detail_df[PROBE_IS_KEPT_COLUMN]) | detail_df[PROBE_EDGE_CASE_REASON_COLUMN].ne("")
+    ].copy()
+
+    summary_rows: list[dict[str, object]] = []
+    for split_name in ("all", "train", "val", "test"):
+        if split_name == "all":
+            split_full_df = full_df.copy()
+            split_probe_df = probe_df.copy()
+        else:
+            split_full_df = full_df.loc[full_df[SPLIT_COLUMN].map(str).eq(split_name)].copy()
+            split_probe_df = probe_df.loc[probe_df[SPLIT_COLUMN].map(str).eq(split_name)].copy()
+        metric_rows = [
+            ("rows_available_after_split_filter", len(split_full_df)),
+            ("rows_kept_for_probe", len(split_probe_df)),
+            ("structural_n_glycan_rows", int(split_full_df[STRUCTURAL_BINARY_COLUMN].sum())),
+            (
+                "rows_kept_with_supported_structural_subclass",
+                int(split_probe_df.shape[0]),
+            ),
+            ("excluded_not_structural_n_glycan_rows", int(split_full_df[STRUCTURAL_CLASS_COLUMN].eq("not_n_glycan").sum())),
+            (
+                "excluded_paucimannose_or_truncated_rows",
+                int(split_full_df[STRUCTURAL_CLASS_COLUMN].eq("n_glycan_paucimannose_or_truncated").sum()),
+            ),
+            ("excluded_unresolved_n_glycan_rows", int(split_full_df[STRUCTURAL_CLASS_COLUMN].eq("n_glycan_unresolved").sum())),
+            ("current_unlabeled_rows_reference", int(split_full_df["current_is_unlabeled_reference"].sum())),
+            ("current_rows_with_multiple_labels_reference", int(split_full_df[HAS_MULTIPLE_LABELS_COLUMN].sum())),
+            ("current_mixed_n_o_rows_reference", int(split_full_df["current_is_mixed_n_o_reference"].sum())),
+        ]
+        for metric_name, metric_value in metric_rows:
+            summary_rows.append(
+                {
+                    "split": split_name,
+                    "edge_case_metric": str(metric_name),
+                    "count": int(metric_value),
+                }
+            )
+
+    return {
+        "probe_df": probe_df.reset_index(drop=True),
+        "edge_case_summary_df": pd.DataFrame(summary_rows),
+        "edge_case_detail_df": _select_existing_columns(
+            detail_df.reset_index(drop=True),
+            [
+                SPLIT_COLUMN,
+                ACCESSION_COLUMN,
+                SEQUENCE_COLUMN,
+                MAIN_GLYCAN_CLASS_COLUMN,
+                N_O_CATEGORY_COLUMN,
+                NUM_LABELS_COLUMN,
+                HAS_MULTIPLE_LABELS_COLUMN,
+                LABEL_SIGNATURE_COLUMN,
+                N_GLYCAN_SUBCLASS_COLUMN,
+                N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN,
+                CURRENT_MAIN_CLASS_COLUMN,
+                CURRENT_N_O_CATEGORY_COLUMN,
+                CURRENT_LABEL_SIGNATURE_COLUMN,
+                CURRENT_SUBCLASS_COLUMN,
+                STRUCTURAL_CLASS_COLUMN,
+                STRUCTURAL_SUBCLASS_COLUMN,
+                PROBE_IS_KEPT_COLUMN,
+                PROBE_EDGE_CASE_REASON_COLUMN,
+            ],
+        ),
+    }
+
+
+def build_structural_probe_export_tables(annotated_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Build notebook-14-ready structural probe tables from one annotated dataframe."""
+
+    full_df = _build_structural_probe_full_dataframe(annotated_df)
+    binary_tables = _build_structural_binary_probe_tables(full_df)
+    subclass_tables = _build_structural_subclass_probe_tables(full_df)
+    return {
+        "binary_probe_df": binary_tables["probe_df"],
+        "binary_edge_case_summary_df": binary_tables["edge_case_summary_df"],
+        "binary_edge_case_detail_df": binary_tables["edge_case_detail_df"],
+        "subclass_probe_df": subclass_tables["probe_df"],
+        "subclass_edge_case_summary_df": subclass_tables["edge_case_summary_df"],
+        "subclass_edge_case_detail_df": subclass_tables["edge_case_detail_df"],
+    }
+
+
+def _select_existing_columns(dataframe: pd.DataFrame, column_names: Sequence[str]) -> pd.DataFrame:
+    """Return one dataframe with only the requested columns that are present."""
+
+    return dataframe.loc[:, [column for column in column_names if column in dataframe.columns]].copy()
 
 
 def _simple_parenthetical_content(glycan_string: str, start_index: int) -> tuple[str, int] | None:
@@ -775,6 +1163,183 @@ def build_binary_agreement_table(annotated_df: pd.DataFrame) -> pd.DataFrame:
     ).reset_index(drop=True)
 
 
+def classify_label_compatibility(row: Mapping[str, Any]) -> tuple[str, str]:
+    """Classify whether the structural call agrees with, refines, or contradicts the current labels."""
+
+    current_main_class = str(row.get(CURRENT_MAIN_CLASS_COLUMN, "")).strip()
+    current_n_o_category = str(row.get(CURRENT_N_O_CATEGORY_COLUMN, "")).strip()
+    current_subclass = str(row.get(CURRENT_SUBCLASS_COLUMN, "")).strip()
+    structural_subclass = str(row.get(STRUCTURAL_SUBCLASS_COLUMN, "")).strip()
+    structural_is_n_glycan = bool(row.get(STRUCTURAL_BINARY_COLUMN, False))
+    num_current_labels = int(row.get(NUM_LABELS_COLUMN, 0) or 0)
+
+    if current_n_o_category == "Mixed N/O":
+        return (
+            "ambiguous_current_reference_requires_review",
+            "current_reference_contains_mixed_n_o_labels",
+        )
+
+    current_is_n_glycan = current_main_class == "N-glycan"
+    current_is_o_glycan = current_n_o_category == "O-glycan"
+    current_is_unlabeled = num_current_labels == 0
+
+    if structural_is_n_glycan:
+        if current_is_n_glycan:
+            if not current_subclass:
+                return (
+                    "compatible_refinement",
+                    "current_broad_n_glycan_label_missing_single_subclass",
+                )
+            if current_subclass == structural_subclass:
+                return (
+                    "compatible_refinement",
+                    "current_and_structural_subclass_match",
+                )
+            if structural_subclass in {"Paucimannose/truncated", "Unresolved N-glycan"}:
+                return (
+                    "compatible_refinement",
+                    "structural_subclass_outside_current_three_class_scheme",
+                )
+            return (
+                "true_contradiction",
+                "current_and_structural_supported_subclass_disagree",
+            )
+
+        if current_is_unlabeled:
+            return (
+                "recovered_missing_or_incomplete_current_label",
+                "current_row_unlabeled_but_structural_n_glycan",
+            )
+
+        if current_is_o_glycan:
+            return (
+                "true_contradiction",
+                "current_o_glycan_but_structural_n_glycan",
+            )
+
+        return (
+            "recovered_missing_or_incomplete_current_label",
+            "current_non_n_label_but_structural_n_glycan",
+        )
+
+    if current_is_n_glycan:
+        return (
+            "true_contradiction",
+            "current_n_glycan_but_structural_not_n_glycan",
+        )
+
+    if current_is_unlabeled:
+        return (
+            "compatible_agreement",
+            "current_row_unlabeled_and_structural_not_n_glycan",
+        )
+
+    return (
+        "compatible_agreement",
+        "current_non_n_label_and_structural_not_n_glycan",
+    )
+
+
+def build_label_compatibility_tables(
+    annotated_df: pd.DataFrame,
+    *,
+    example_limit: int = 200,
+) -> dict[str, pd.DataFrame]:
+    """Summarize and sample how structural labels relate to the current labels."""
+
+    compatibility_df = annotated_df.copy()
+    compatibility_pairs = compatibility_df.apply(classify_label_compatibility, axis=1, result_type="expand")
+    compatibility_df[LABEL_COMPATIBILITY_GROUP_COLUMN] = compatibility_pairs[0]
+    compatibility_df[LABEL_COMPATIBILITY_DETAIL_COLUMN] = compatibility_pairs[1]
+
+    summary_df = (
+        compatibility_df.groupby(
+            [SPLIT_COLUMN, LABEL_COMPATIBILITY_GROUP_COLUMN, LABEL_COMPATIBILITY_DETAIL_COLUMN],
+            dropna=False,
+        )
+        .size()
+        .rename("count")
+        .reset_index()
+    )
+    summary_df[LABEL_COMPATIBILITY_GROUP_COLUMN] = pd.Categorical(
+        summary_df[LABEL_COMPATIBILITY_GROUP_COLUMN],
+        categories=LABEL_COMPATIBILITY_GROUP_ORDER,
+        ordered=True,
+    )
+    summary_df = summary_df.sort_values(
+        [SPLIT_COLUMN, LABEL_COMPATIBILITY_GROUP_COLUMN, "count", LABEL_COMPATIBILITY_DETAIL_COLUMN],
+        ascending=[True, True, False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+
+    selected_columns = [
+        SPLIT_COLUMN,
+        ACCESSION_COLUMN,
+        SEQUENCE_COLUMN,
+        CURRENT_MAIN_CLASS_COLUMN,
+        CURRENT_N_O_CATEGORY_COLUMN,
+        CURRENT_SUBCLASS_COLUMN,
+        CURRENT_LABEL_SIGNATURE_COLUMN,
+        STRUCTURAL_CLASS_COLUMN,
+        STRUCTURAL_SUBCLASS_COLUMN,
+        STRUCTURAL_REASON_COLUMN,
+        STRUCTURAL_CONFIDENCE_COLUMN,
+        LABEL_COMPATIBILITY_GROUP_COLUMN,
+        LABEL_COMPATIBILITY_DETAIL_COLUMN,
+    ]
+    compatible_refinement_examples_df = compatibility_df.loc[
+        compatibility_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq("compatible_refinement")
+    ].copy()
+    compatible_refinement_examples_df = compatible_refinement_examples_df.sort_values(
+        [SPLIT_COLUMN, LABEL_COMPATIBILITY_DETAIL_COLUMN, ACCESSION_COLUMN],
+        kind="stable",
+    ).head(int(example_limit))
+
+    recovered_examples_df = compatibility_df.loc[
+        compatibility_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq(
+            "recovered_missing_or_incomplete_current_label"
+        )
+    ].copy()
+    recovered_examples_df = recovered_examples_df.sort_values(
+        [SPLIT_COLUMN, LABEL_COMPATIBILITY_DETAIL_COLUMN, ACCESSION_COLUMN],
+        kind="stable",
+    ).head(int(example_limit))
+
+    contradiction_examples_df = compatibility_df.loc[
+        compatibility_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq("true_contradiction")
+    ].copy()
+    contradiction_examples_df = contradiction_examples_df.sort_values(
+        [SPLIT_COLUMN, LABEL_COMPATIBILITY_DETAIL_COLUMN, ACCESSION_COLUMN],
+        kind="stable",
+    ).head(int(example_limit))
+
+    ambiguous_examples_df = compatibility_df.loc[
+        compatibility_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq(
+            "ambiguous_current_reference_requires_review"
+        )
+    ].copy()
+    ambiguous_examples_df = ambiguous_examples_df.sort_values(
+        [SPLIT_COLUMN, LABEL_COMPATIBILITY_DETAIL_COLUMN, ACCESSION_COLUMN],
+        kind="stable",
+    ).head(int(example_limit))
+
+    return {
+        "compatibility_summary_df": summary_df,
+        "compatible_refinement_examples_df": compatible_refinement_examples_df.loc[
+            :, [column for column in selected_columns if column in compatible_refinement_examples_df.columns]
+        ].copy(),
+        "recovered_examples_df": recovered_examples_df.loc[
+            :, [column for column in selected_columns if column in recovered_examples_df.columns]
+        ].copy(),
+        "contradiction_examples_df": contradiction_examples_df.loc[
+            :, [column for column in selected_columns if column in contradiction_examples_df.columns]
+        ].copy(),
+        "ambiguous_examples_df": ambiguous_examples_df.loc[
+            :, [column for column in selected_columns if column in ambiguous_examples_df.columns]
+        ].copy(),
+    }
+
+
 def build_subclass_agreement_table(annotated_df: pd.DataFrame) -> pd.DataFrame:
     """Compare structural subclass calls against the current label-derived subclass view."""
 
@@ -875,8 +1440,19 @@ def build_structural_classification_output_paths(
         "reason_summary_path": results_dir / "structural_reason_summary.csv",
         "binary_agreement_path": results_dir / "binary_agreement_summary.csv",
         "subclass_agreement_path": results_dir / "subclass_agreement_summary.csv",
+        "label_compatibility_summary_path": results_dir / "label_compatibility_summary.csv",
         "disagreement_examples_path": results_dir / "binary_disagreement_examples.csv",
         "unresolved_examples_path": results_dir / "unresolved_examples.csv",
+        "compatible_refinement_examples_path": results_dir / "compatible_refinement_examples.csv",
+        "recovered_label_examples_path": results_dir / "recovered_missing_or_incomplete_current_label_examples.csv",
+        "contradiction_examples_path": results_dir / "true_contradiction_examples.csv",
+        "ambiguous_reference_examples_path": results_dir / "ambiguous_current_reference_examples.csv",
+        "binary_probe_rows_path": results_dir / "structural_binary_probe_rows.csv",
+        "binary_probe_edge_case_summary_path": results_dir / "structural_binary_probe_edge_case_summary.csv",
+        "binary_probe_edge_case_detail_path": results_dir / "structural_binary_probe_edge_case_details.csv",
+        "subclass_probe_rows_path": results_dir / "structural_subclass_probe_rows.csv",
+        "subclass_probe_edge_case_summary_path": results_dir / "structural_subclass_probe_edge_case_summary.csv",
+        "subclass_probe_edge_case_detail_path": results_dir / "structural_subclass_probe_edge_case_details.csv",
     }
 
 
@@ -953,19 +1529,62 @@ def run_structural_classification_workflow(
     reason_summary_df = summarize_structural_reasons(annotated_df)
     binary_agreement_df = build_binary_agreement_table(annotated_df)
     subclass_agreement_df = build_subclass_agreement_table(annotated_df)
+    compatibility_tables = build_label_compatibility_tables(
+        annotated_df,
+        example_limit=max(int(disagreement_limit), int(unresolved_limit)),
+    )
     example_tables = build_structural_evaluation_examples(
         annotated_df,
         disagreement_limit=disagreement_limit,
         unresolved_limit=unresolved_limit,
     )
+    probe_export_tables = build_structural_probe_export_tables(annotated_df)
 
     annotated_df.to_csv(output_paths["annotated_rows_path"], index=False)
     class_summary_df.to_csv(output_paths["class_summary_path"], index=False)
     reason_summary_df.to_csv(output_paths["reason_summary_path"], index=False)
     binary_agreement_df.to_csv(output_paths["binary_agreement_path"], index=False)
     subclass_agreement_df.to_csv(output_paths["subclass_agreement_path"], index=False)
+    compatibility_tables["compatibility_summary_df"].to_csv(
+        output_paths["label_compatibility_summary_path"],
+        index=False,
+    )
     example_tables["disagreement_examples_df"].to_csv(output_paths["disagreement_examples_path"], index=False)
     example_tables["unresolved_examples_df"].to_csv(output_paths["unresolved_examples_path"], index=False)
+    compatibility_tables["compatible_refinement_examples_df"].to_csv(
+        output_paths["compatible_refinement_examples_path"],
+        index=False,
+    )
+    compatibility_tables["recovered_examples_df"].to_csv(
+        output_paths["recovered_label_examples_path"],
+        index=False,
+    )
+    compatibility_tables["contradiction_examples_df"].to_csv(
+        output_paths["contradiction_examples_path"],
+        index=False,
+    )
+    compatibility_tables["ambiguous_examples_df"].to_csv(
+        output_paths["ambiguous_reference_examples_path"],
+        index=False,
+    )
+    probe_export_tables["binary_probe_df"].to_csv(output_paths["binary_probe_rows_path"], index=False)
+    probe_export_tables["binary_edge_case_summary_df"].to_csv(
+        output_paths["binary_probe_edge_case_summary_path"],
+        index=False,
+    )
+    probe_export_tables["binary_edge_case_detail_df"].to_csv(
+        output_paths["binary_probe_edge_case_detail_path"],
+        index=False,
+    )
+    probe_export_tables["subclass_probe_df"].to_csv(output_paths["subclass_probe_rows_path"], index=False)
+    probe_export_tables["subclass_edge_case_summary_df"].to_csv(
+        output_paths["subclass_probe_edge_case_summary_path"],
+        index=False,
+    )
+    probe_export_tables["subclass_edge_case_detail_df"].to_csv(
+        output_paths["subclass_probe_edge_case_detail_path"],
+        index=False,
+    )
 
     return {
         "annotated_df": annotated_df,
@@ -973,7 +1592,18 @@ def run_structural_classification_workflow(
         "reason_summary_df": reason_summary_df,
         "binary_agreement_df": binary_agreement_df,
         "subclass_agreement_df": subclass_agreement_df,
+        "label_compatibility_summary_df": compatibility_tables["compatibility_summary_df"],
         "disagreement_examples_df": example_tables["disagreement_examples_df"],
         "unresolved_examples_df": example_tables["unresolved_examples_df"],
+        "compatible_refinement_examples_df": compatibility_tables["compatible_refinement_examples_df"],
+        "recovered_examples_df": compatibility_tables["recovered_examples_df"],
+        "contradiction_examples_df": compatibility_tables["contradiction_examples_df"],
+        "ambiguous_examples_df": compatibility_tables["ambiguous_examples_df"],
+        "binary_probe_df": probe_export_tables["binary_probe_df"],
+        "binary_probe_edge_case_summary_df": probe_export_tables["binary_edge_case_summary_df"],
+        "binary_probe_edge_case_detail_df": probe_export_tables["binary_edge_case_detail_df"],
+        "subclass_probe_df": probe_export_tables["subclass_probe_df"],
+        "subclass_probe_edge_case_summary_df": probe_export_tables["subclass_edge_case_summary_df"],
+        "subclass_probe_edge_case_detail_df": probe_export_tables["subclass_edge_case_detail_df"],
         "output_paths": dict(output_paths),
     }

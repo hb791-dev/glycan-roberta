@@ -63,6 +63,7 @@ from src.classification_embedding_umap import (
 )
 from src.classification_training import ACCESSION_COLUMN, LABEL_LIST_COLUMN, SEQUENCE_COLUMN, SPLIT_COLUMN
 from src.notebook_utils import require_existing_path, stringify_path_values, validate_output_paths, write_json
+from src.n_glycan_structural_classification import build_structural_classification_output_paths
 from src.similarity_core import (
     embed_sequences,
     load_similarity_artifacts,
@@ -80,6 +81,12 @@ DEFAULT_POSITIVE_LABEL = "N-glycan"
 DEFAULT_NEGATIVE_LABEL = "Not N-glycan (including unlabeled)"
 DEFAULT_BINARY_TARGET_NAME = "N-glycan vs other"
 DEFAULT_SUBCLASS_TARGET_NAME = "N-glycan subclass probe"
+CURRENT_PROJECT_LABEL_SOURCE = "current_project_labels"
+STRUCTURAL_RULE_LABEL_SOURCE = "structural_rule_labels"
+SUPPORTED_PROBE_LABEL_SOURCES = (
+    CURRENT_PROJECT_LABEL_SOURCE,
+    STRUCTURAL_RULE_LABEL_SOURCE,
+)
 SUPPORTED_PROBE_TARGET_MODES = (
     "n_glycan_binary",
     "n_glycan_subclass_multiclass",
@@ -736,6 +743,18 @@ def prepare_n_glycan_probe_dataframe(
     return probe_bundle["annotated_probe_df"], probe_bundle["label_vocabulary_df"]
 
 
+def _normalize_probe_label_source(probe_label_source: str) -> str:
+    """Return one validated notebook-14 probe-label source name."""
+
+    normalized_source = str(probe_label_source).strip()
+    if normalized_source not in SUPPORTED_PROBE_LABEL_SOURCES:
+        raise ValueError(
+            f"Unsupported probe_label_source {probe_label_source!r}. "
+            f"Choose from {SUPPORTED_PROBE_LABEL_SOURCES}."
+        )
+    return normalized_source
+
+
 def _normalize_probe_target_mode(probe_target_mode: str) -> str:
     """Return one validated notebook-14 probe-target mode."""
     normalized_mode = str(probe_target_mode).strip()
@@ -1048,6 +1067,169 @@ def prepare_logreg_probe_dataframe(
         "probe_target_name": probe_target_name,
         "subclass_categories": normalized_subclass_categories,
     }
+
+
+def load_saved_probe_dataframe_bundle(
+    *,
+    probe_rows_path: str | Path,
+    edge_case_summary_path: str | Path | None = None,
+    edge_case_detail_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Load one previously prepared probe dataset and its edge-case tables."""
+
+    probe_df = pd.read_csv(require_existing_path(probe_rows_path, "Prepared probe rows CSV")).copy()
+    required_columns = {
+        ACCESSION_COLUMN,
+        SEQUENCE_COLUMN,
+        SPLIT_COLUMN,
+        TARGET_COLUMN,
+        TARGET_LABEL_COLUMN,
+        TARGET_KIND_COLUMN,
+    }
+    missing_columns = sorted(required_columns - set(probe_df.columns))
+    if missing_columns:
+        raise ValueError(
+            "Prepared probe rows CSV is missing required columns: "
+            f"{missing_columns}"
+        )
+
+    probe_df[TARGET_COLUMN] = probe_df[TARGET_COLUMN].astype(int)
+    probe_df[TARGET_LABEL_COLUMN] = probe_df[TARGET_LABEL_COLUMN].fillna("").map(str)
+    probe_df[TARGET_KIND_COLUMN] = probe_df[TARGET_KIND_COLUMN].fillna("").map(str)
+
+    edge_case_summary_df = (
+        pd.read_csv(require_existing_path(edge_case_summary_path, "Probe edge-case summary CSV")).copy()
+        if edge_case_summary_path is not None
+        else pd.DataFrame()
+    )
+    edge_case_detail_df = (
+        pd.read_csv(require_existing_path(edge_case_detail_path, "Probe edge-case detail CSV")).copy()
+        if edge_case_detail_path is not None
+        else pd.DataFrame()
+    )
+
+    probe_target_name = ""
+    if "probe_target_name" in probe_df.columns:
+        probe_target_name_values = [
+            str(value).strip()
+            for value in probe_df["probe_target_name"].dropna().tolist()
+            if str(value).strip()
+        ]
+        if probe_target_name_values:
+            probe_target_name = probe_target_name_values[0]
+    if not probe_target_name:
+        target_kind = str(probe_df[TARGET_KIND_COLUMN].mode(dropna=True).iat[0]) if not probe_df.empty else ""
+        probe_target_name = (
+            DEFAULT_SUBCLASS_TARGET_NAME
+            if target_kind == "multiclass"
+            else DEFAULT_BINARY_TARGET_NAME
+        )
+
+    subclass_categories: tuple[str, ...] = tuple()
+    if "n_glycan_subclass_label" in probe_df.columns:
+        subclass_categories = tuple(
+            label_name
+            for label_name in probe_df["n_glycan_subclass_label"].dropna().map(str).tolist()
+            if label_name
+        )
+        subclass_categories = tuple(dict.fromkeys(subclass_categories))
+
+    return {
+        "annotated_probe_df": probe_df.reset_index(drop=True),
+        "full_annotated_df": probe_df.reset_index(drop=True),
+        "label_vocabulary_df": pd.DataFrame(),
+        "target_summary_df": summarize_probe_target(probe_df),
+        "class_summary_df": summarize_main_glycan_class_by_split(probe_df),
+        "edge_case_summary_df": edge_case_summary_df,
+        "edge_case_detail_df": edge_case_detail_df,
+        "probe_target_mode": (
+            "n_glycan_subclass_multiclass"
+            if probe_df[TARGET_KIND_COLUMN].eq("multiclass").any()
+            else "n_glycan_binary"
+        ),
+        "probe_target_name": probe_target_name,
+        "subclass_categories": subclass_categories,
+    }
+
+
+def prepare_probe_dataframe_for_notebook14(
+    *,
+    probe_label_source: str,
+    train_csv_path: str | Path,
+    val_csv_path: str | Path,
+    test_csv_path: str | Path,
+    label_vocabulary_path: str | Path,
+    splits_to_include: Sequence[str] | None = None,
+    probe_target_mode: str = "n_glycan_binary",
+    exclude_unlabeled_rows: bool = False,
+    positive_label: str = DEFAULT_POSITIVE_LABEL,
+    negative_label: str = DEFAULT_NEGATIVE_LABEL,
+    subclass_categories: Sequence[str] | None = None,
+    structural_results_dir: str | Path | None = None,
+    structural_run_label: str | None = None,
+    project_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Prepare one notebook-14 probe bundle from current labels or structural exports."""
+
+    normalized_source = _normalize_probe_label_source(probe_label_source)
+    normalized_mode = _normalize_probe_target_mode(probe_target_mode)
+
+    if normalized_source == CURRENT_PROJECT_LABEL_SOURCE:
+        probe_bundle = prepare_logreg_probe_dataframe(
+            train_csv_path=train_csv_path,
+            val_csv_path=val_csv_path,
+            test_csv_path=test_csv_path,
+            label_vocabulary_path=label_vocabulary_path,
+            splits_to_include=splits_to_include,
+            probe_target_mode=normalized_mode,
+            exclude_unlabeled_rows=exclude_unlabeled_rows,
+            positive_label=positive_label,
+            negative_label=negative_label,
+            subclass_categories=subclass_categories,
+        )
+        probe_bundle["probe_label_source"] = normalized_source
+        return probe_bundle
+
+    if structural_results_dir is None:
+        if project_root is None or not str(project_root).strip():
+            raise ValueError(
+                "project_root is required when structural_results_dir is not provided."
+            )
+        if structural_run_label is None or not str(structural_run_label).strip():
+            raise ValueError(
+                "structural_run_label is required when structural_results_dir is not provided."
+            )
+        structural_output_paths = build_structural_classification_output_paths(
+            project_root,
+            run_label=str(structural_run_label),
+        )
+    else:
+        structural_results_dir = Path(structural_results_dir)
+        structural_output_paths = {
+            "binary_probe_rows_path": structural_results_dir / "structural_binary_probe_rows.csv",
+            "binary_probe_edge_case_summary_path": structural_results_dir / "structural_binary_probe_edge_case_summary.csv",
+            "binary_probe_edge_case_detail_path": structural_results_dir / "structural_binary_probe_edge_case_details.csv",
+            "subclass_probe_rows_path": structural_results_dir / "structural_subclass_probe_rows.csv",
+            "subclass_probe_edge_case_summary_path": structural_results_dir / "structural_subclass_probe_edge_case_summary.csv",
+            "subclass_probe_edge_case_detail_path": structural_results_dir / "structural_subclass_probe_edge_case_details.csv",
+        }
+
+    if normalized_mode == "n_glycan_binary":
+        probe_bundle = load_saved_probe_dataframe_bundle(
+            probe_rows_path=structural_output_paths["binary_probe_rows_path"],
+            edge_case_summary_path=structural_output_paths["binary_probe_edge_case_summary_path"],
+            edge_case_detail_path=structural_output_paths["binary_probe_edge_case_detail_path"],
+        )
+    else:
+        probe_bundle = load_saved_probe_dataframe_bundle(
+            probe_rows_path=structural_output_paths["subclass_probe_rows_path"],
+            edge_case_summary_path=structural_output_paths["subclass_probe_edge_case_summary_path"],
+            edge_case_detail_path=structural_output_paths["subclass_probe_edge_case_detail_path"],
+        )
+
+    probe_bundle["probe_target_mode"] = normalized_mode
+    probe_bundle["probe_label_source"] = normalized_source
+    return probe_bundle
 
 
 def summarize_probe_target(annotated_df: pd.DataFrame) -> pd.DataFrame:
