@@ -101,6 +101,12 @@ STRUCTURAL_SUPPORTED_PROBE_SUBCLASS_ORDER = (
 STRUCTURAL_LABEL_SOURCE_NAME = "structural_rule_labels"
 STRUCTURAL_BINARY_TARGET_NAME = "Structural N-glycan vs other"
 STRUCTURAL_SUBCLASS_TARGET_NAME = "Structural N-glycan subclass probe"
+STRUCTURAL_INCLUDE_TRUE_CONTRADICTIONS = "include_true_contradictions"
+STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS = "exclude_true_contradictions"
+SUPPORTED_STRUCTURAL_CONTRADICTION_POLICIES = (
+    STRUCTURAL_INCLUDE_TRUE_CONTRADICTIONS,
+    STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS,
+)
 
 N_GLYCAN_SUBCLASS_KEYWORDS = {
     "High mannose": ("high mannose", "high-mannose"),
@@ -403,10 +409,19 @@ def _append_reason_series(reason_series: pd.Series, mask: pd.Series, reason_text
     return updated_series
 
 
-def _build_structural_binary_probe_tables(full_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def _build_structural_binary_probe_tables(
+    full_df: pd.DataFrame,
+    *,
+    contradiction_policy: str = STRUCTURAL_INCLUDE_TRUE_CONTRADICTIONS,
+) -> dict[str, pd.DataFrame]:
     """Return notebook-14-ready binary probe tables from the structural annotations."""
 
+    exclude_true_contradictions = contradiction_policy == STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS
     probe_df = full_df.copy()
+    if exclude_true_contradictions:
+        probe_df = probe_df.loc[
+            ~probe_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq("true_contradiction")
+        ].copy()
     probe_df[PROBE_TARGET_COLUMN] = probe_df[STRUCTURAL_BINARY_COLUMN].astype(int)
     probe_df[PROBE_TARGET_LABEL_COLUMN] = probe_df[STRUCTURAL_CLASS_COLUMN].map(
         lambda class_name: STRUCTURAL_CLASS_TO_BINARY_LABEL.get(str(class_name), "Not N-glycan")
@@ -416,8 +431,28 @@ def _build_structural_binary_probe_tables(full_df: pd.DataFrame) -> dict[str, pd
     probe_df[PROBE_IS_KEPT_COLUMN] = True
 
     detail_df = full_df.copy()
-    detail_df[PROBE_IS_KEPT_COLUMN] = True
+    kept_keys = set(
+        zip(
+            probe_df[ACCESSION_COLUMN].fillna("").map(str),
+            probe_df[SEQUENCE_COLUMN].fillna("").map(str),
+            probe_df[SPLIT_COLUMN].fillna("").map(str),
+        )
+    )
+    detail_df[PROBE_IS_KEPT_COLUMN] = [
+        (str(accession), str(sequence), str(split_name)) in kept_keys
+        for accession, sequence, split_name in zip(
+            detail_df[ACCESSION_COLUMN].fillna("").map(str),
+            detail_df[SEQUENCE_COLUMN].fillna("").map(str),
+            detail_df[SPLIT_COLUMN].fillna("").map(str),
+        )
+    ]
     detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = detail_df[PROBE_EDGE_CASE_REASON_COLUMN].fillna("").map(str)
+    if exclude_true_contradictions:
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+            detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+            detail_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq("true_contradiction"),
+            "excluded_true_contradiction_row",
+        )
     detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
         detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
         detail_df["current_is_unlabeled_reference"],
@@ -479,6 +514,13 @@ def _build_structural_binary_probe_tables(full_df: pd.DataFrame) -> dict[str, pd
                 int(split_full_df["structural_binary_disagrees_with_current"].sum()),
             ),
         ]
+        if exclude_true_contradictions:
+            metric_rows.append(
+                (
+                    "excluded_true_contradiction_rows",
+                    int(split_full_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq("true_contradiction").sum()),
+                )
+            )
         for metric_name, metric_value in metric_rows:
             summary_rows.append(
                 {
@@ -515,7 +557,11 @@ def _build_structural_binary_probe_tables(full_df: pd.DataFrame) -> dict[str, pd
     }
 
 
-def _build_structural_subclass_probe_tables(full_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def _build_structural_subclass_probe_tables(
+    full_df: pd.DataFrame,
+    *,
+    contradiction_policy: str = STRUCTURAL_INCLUDE_TRUE_CONTRADICTIONS,
+) -> dict[str, pd.DataFrame]:
     """Return notebook-14-ready structural three-class subclass probe tables."""
 
     subclass_code_lookup = {
@@ -523,11 +569,16 @@ def _build_structural_subclass_probe_tables(full_df: pd.DataFrame) -> dict[str, 
         for subclass_index, subclass_name in enumerate(STRUCTURAL_SUPPORTED_PROBE_SUBCLASS_ORDER)
     }
 
+    exclude_true_contradictions = contradiction_policy == STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS
     probe_df = full_df.loc[
         full_df[STRUCTURAL_CLASS_COLUMN].isin(
             {"n_glycan_high_mannose", "n_glycan_complex", "n_glycan_hybrid"}
         )
     ].copy()
+    if exclude_true_contradictions:
+        probe_df = probe_df.loc[
+            ~probe_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq("true_contradiction")
+        ].copy()
     probe_df[PROBE_TARGET_LABEL_COLUMN] = probe_df[N_GLYCAN_SUBCLASS_COLUMN].map(str)
     probe_df[PROBE_TARGET_COLUMN] = probe_df[PROBE_TARGET_LABEL_COLUMN].map(subclass_code_lookup).astype(int)
     probe_df[PROBE_TARGET_KIND_COLUMN] = "multiclass"
@@ -551,6 +602,12 @@ def _build_structural_subclass_probe_tables(full_df: pd.DataFrame) -> dict[str, 
         )
     ]
     detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = detail_df[PROBE_EDGE_CASE_REASON_COLUMN].fillna("").map(str)
+    if exclude_true_contradictions:
+        detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
+            detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
+            detail_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq("true_contradiction"),
+            "excluded_true_contradiction_row",
+        )
     detail_df[PROBE_EDGE_CASE_REASON_COLUMN] = _append_reason_series(
         detail_df[PROBE_EDGE_CASE_REASON_COLUMN],
         detail_df[STRUCTURAL_CLASS_COLUMN].eq("not_n_glycan"),
@@ -611,6 +668,13 @@ def _build_structural_subclass_probe_tables(full_df: pd.DataFrame) -> dict[str, 
             ("current_rows_with_multiple_labels_reference", int(split_full_df[HAS_MULTIPLE_LABELS_COLUMN].sum())),
             ("current_mixed_n_o_rows_reference", int(split_full_df["current_is_mixed_n_o_reference"].sum())),
         ]
+        if exclude_true_contradictions:
+            metric_rows.append(
+                (
+                    "excluded_true_contradiction_rows",
+                    int(split_full_df[LABEL_COMPATIBILITY_GROUP_COLUMN].eq("true_contradiction").sum()),
+                )
+            )
         for metric_name, metric_value in metric_rows:
             summary_rows.append(
                 {
@@ -653,15 +717,38 @@ def build_structural_probe_export_tables(annotated_df: pd.DataFrame) -> dict[str
     """Build notebook-14-ready structural probe tables from one annotated dataframe."""
 
     full_df = _build_structural_probe_full_dataframe(annotated_df)
-    binary_tables = _build_structural_binary_probe_tables(full_df)
-    subclass_tables = _build_structural_subclass_probe_tables(full_df)
+    compatibility_pairs = full_df.apply(classify_label_compatibility, axis=1, result_type="expand")
+    full_df[LABEL_COMPATIBILITY_GROUP_COLUMN] = compatibility_pairs[0]
+    full_df[LABEL_COMPATIBILITY_DETAIL_COLUMN] = compatibility_pairs[1]
+    binary_tables = _build_structural_binary_probe_tables(
+        full_df,
+        contradiction_policy=STRUCTURAL_INCLUDE_TRUE_CONTRADICTIONS,
+    )
+    binary_tables_without_contradictions = _build_structural_binary_probe_tables(
+        full_df,
+        contradiction_policy=STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS,
+    )
+    subclass_tables = _build_structural_subclass_probe_tables(
+        full_df,
+        contradiction_policy=STRUCTURAL_INCLUDE_TRUE_CONTRADICTIONS,
+    )
+    subclass_tables_without_contradictions = _build_structural_subclass_probe_tables(
+        full_df,
+        contradiction_policy=STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS,
+    )
     return {
         "binary_probe_df": binary_tables["probe_df"],
         "binary_edge_case_summary_df": binary_tables["edge_case_summary_df"],
         "binary_edge_case_detail_df": binary_tables["edge_case_detail_df"],
+        "binary_probe_without_contradictions_df": binary_tables_without_contradictions["probe_df"],
+        "binary_without_contradictions_edge_case_summary_df": binary_tables_without_contradictions["edge_case_summary_df"],
+        "binary_without_contradictions_edge_case_detail_df": binary_tables_without_contradictions["edge_case_detail_df"],
         "subclass_probe_df": subclass_tables["probe_df"],
         "subclass_edge_case_summary_df": subclass_tables["edge_case_summary_df"],
         "subclass_edge_case_detail_df": subclass_tables["edge_case_detail_df"],
+        "subclass_probe_without_contradictions_df": subclass_tables_without_contradictions["probe_df"],
+        "subclass_without_contradictions_edge_case_summary_df": subclass_tables_without_contradictions["edge_case_summary_df"],
+        "subclass_without_contradictions_edge_case_detail_df": subclass_tables_without_contradictions["edge_case_detail_df"],
     }
 
 
@@ -1450,9 +1537,15 @@ def build_structural_classification_output_paths(
         "binary_probe_rows_path": results_dir / "structural_binary_probe_rows.csv",
         "binary_probe_edge_case_summary_path": results_dir / "structural_binary_probe_edge_case_summary.csv",
         "binary_probe_edge_case_detail_path": results_dir / "structural_binary_probe_edge_case_details.csv",
+        "binary_probe_without_contradictions_rows_path": results_dir / "structural_binary_probe_rows_excluding_true_contradictions.csv",
+        "binary_probe_without_contradictions_edge_case_summary_path": results_dir / "structural_binary_probe_edge_case_summary_excluding_true_contradictions.csv",
+        "binary_probe_without_contradictions_edge_case_detail_path": results_dir / "structural_binary_probe_edge_case_details_excluding_true_contradictions.csv",
         "subclass_probe_rows_path": results_dir / "structural_subclass_probe_rows.csv",
         "subclass_probe_edge_case_summary_path": results_dir / "structural_subclass_probe_edge_case_summary.csv",
         "subclass_probe_edge_case_detail_path": results_dir / "structural_subclass_probe_edge_case_details.csv",
+        "subclass_probe_without_contradictions_rows_path": results_dir / "structural_subclass_probe_rows_excluding_true_contradictions.csv",
+        "subclass_probe_without_contradictions_edge_case_summary_path": results_dir / "structural_subclass_probe_edge_case_summary_excluding_true_contradictions.csv",
+        "subclass_probe_without_contradictions_edge_case_detail_path": results_dir / "structural_subclass_probe_edge_case_details_excluding_true_contradictions.csv",
     }
 
 
@@ -1576,6 +1669,18 @@ def run_structural_classification_workflow(
         output_paths["binary_probe_edge_case_detail_path"],
         index=False,
     )
+    probe_export_tables["binary_probe_without_contradictions_df"].to_csv(
+        output_paths["binary_probe_without_contradictions_rows_path"],
+        index=False,
+    )
+    probe_export_tables["binary_without_contradictions_edge_case_summary_df"].to_csv(
+        output_paths["binary_probe_without_contradictions_edge_case_summary_path"],
+        index=False,
+    )
+    probe_export_tables["binary_without_contradictions_edge_case_detail_df"].to_csv(
+        output_paths["binary_probe_without_contradictions_edge_case_detail_path"],
+        index=False,
+    )
     probe_export_tables["subclass_probe_df"].to_csv(output_paths["subclass_probe_rows_path"], index=False)
     probe_export_tables["subclass_edge_case_summary_df"].to_csv(
         output_paths["subclass_probe_edge_case_summary_path"],
@@ -1583,6 +1688,18 @@ def run_structural_classification_workflow(
     )
     probe_export_tables["subclass_edge_case_detail_df"].to_csv(
         output_paths["subclass_probe_edge_case_detail_path"],
+        index=False,
+    )
+    probe_export_tables["subclass_probe_without_contradictions_df"].to_csv(
+        output_paths["subclass_probe_without_contradictions_rows_path"],
+        index=False,
+    )
+    probe_export_tables["subclass_without_contradictions_edge_case_summary_df"].to_csv(
+        output_paths["subclass_probe_without_contradictions_edge_case_summary_path"],
+        index=False,
+    )
+    probe_export_tables["subclass_without_contradictions_edge_case_detail_df"].to_csv(
+        output_paths["subclass_probe_without_contradictions_edge_case_detail_path"],
         index=False,
     )
 
@@ -1602,8 +1719,14 @@ def run_structural_classification_workflow(
         "binary_probe_df": probe_export_tables["binary_probe_df"],
         "binary_probe_edge_case_summary_df": probe_export_tables["binary_edge_case_summary_df"],
         "binary_probe_edge_case_detail_df": probe_export_tables["binary_edge_case_detail_df"],
+        "binary_probe_without_contradictions_df": probe_export_tables["binary_probe_without_contradictions_df"],
+        "binary_probe_without_contradictions_edge_case_summary_df": probe_export_tables["binary_without_contradictions_edge_case_summary_df"],
+        "binary_probe_without_contradictions_edge_case_detail_df": probe_export_tables["binary_without_contradictions_edge_case_detail_df"],
         "subclass_probe_df": probe_export_tables["subclass_probe_df"],
         "subclass_probe_edge_case_summary_df": probe_export_tables["subclass_edge_case_summary_df"],
         "subclass_probe_edge_case_detail_df": probe_export_tables["subclass_edge_case_detail_df"],
+        "subclass_probe_without_contradictions_df": probe_export_tables["subclass_probe_without_contradictions_df"],
+        "subclass_probe_without_contradictions_edge_case_summary_df": probe_export_tables["subclass_without_contradictions_edge_case_summary_df"],
+        "subclass_probe_without_contradictions_edge_case_detail_df": probe_export_tables["subclass_without_contradictions_edge_case_detail_df"],
         "output_paths": dict(output_paths),
     }

@@ -63,7 +63,12 @@ from src.classification_embedding_umap import (
 )
 from src.classification_training import ACCESSION_COLUMN, LABEL_LIST_COLUMN, SEQUENCE_COLUMN, SPLIT_COLUMN
 from src.notebook_utils import require_existing_path, stringify_path_values, validate_output_paths, write_json
-from src.n_glycan_structural_classification import build_structural_classification_output_paths
+from src.n_glycan_structural_classification import (
+    STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS,
+    STRUCTURAL_INCLUDE_TRUE_CONTRADICTIONS,
+    SUPPORTED_STRUCTURAL_CONTRADICTION_POLICIES,
+    build_structural_classification_output_paths,
+)
 from src.similarity_core import (
     embed_sequences,
     load_similarity_artifacts,
@@ -87,6 +92,7 @@ SUPPORTED_PROBE_LABEL_SOURCES = (
     CURRENT_PROJECT_LABEL_SOURCE,
     STRUCTURAL_RULE_LABEL_SOURCE,
 )
+DEFAULT_STRUCTURAL_CONTRADICTION_POLICY = STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS
 SUPPORTED_PROBE_TARGET_MODES = (
     "n_glycan_binary",
     "n_glycan_subclass_multiclass",
@@ -755,6 +761,18 @@ def _normalize_probe_label_source(probe_label_source: str) -> str:
     return normalized_source
 
 
+def _normalize_structural_contradiction_policy(structural_contradiction_policy: str) -> str:
+    """Return one validated structural contradiction-handling policy."""
+
+    normalized_policy = str(structural_contradiction_policy).strip()
+    if normalized_policy not in SUPPORTED_STRUCTURAL_CONTRADICTION_POLICIES:
+        raise ValueError(
+            f"Unsupported structural_contradiction_policy {structural_contradiction_policy!r}. "
+            f"Choose from {SUPPORTED_STRUCTURAL_CONTRADICTION_POLICIES}."
+        )
+    return normalized_policy
+
+
 def _normalize_probe_target_mode(probe_target_mode: str) -> str:
     """Return one validated notebook-14 probe-target mode."""
     normalized_mode = str(probe_target_mode).strip()
@@ -1168,11 +1186,15 @@ def prepare_probe_dataframe_for_notebook14(
     structural_results_dir: str | Path | None = None,
     structural_run_label: str | None = None,
     project_root: str | Path | None = None,
+    structural_contradiction_policy: str = DEFAULT_STRUCTURAL_CONTRADICTION_POLICY,
 ) -> dict[str, Any]:
     """Prepare one notebook-14 probe bundle from current labels or structural exports."""
 
     normalized_source = _normalize_probe_label_source(probe_label_source)
     normalized_mode = _normalize_probe_target_mode(probe_target_mode)
+    normalized_contradiction_policy = _normalize_structural_contradiction_policy(
+        structural_contradiction_policy
+    )
 
     if normalized_source == CURRENT_PROJECT_LABEL_SOURCE:
         probe_bundle = prepare_logreg_probe_dataframe(
@@ -1188,6 +1210,7 @@ def prepare_probe_dataframe_for_notebook14(
             subclass_categories=subclass_categories,
         )
         probe_bundle["probe_label_source"] = normalized_source
+        probe_bundle["structural_contradiction_policy"] = None
         return probe_bundle
 
     if structural_results_dir is None:
@@ -1209,26 +1232,60 @@ def prepare_probe_dataframe_for_notebook14(
             "binary_probe_rows_path": structural_results_dir / "structural_binary_probe_rows.csv",
             "binary_probe_edge_case_summary_path": structural_results_dir / "structural_binary_probe_edge_case_summary.csv",
             "binary_probe_edge_case_detail_path": structural_results_dir / "structural_binary_probe_edge_case_details.csv",
+            "binary_probe_without_contradictions_rows_path": structural_results_dir / "structural_binary_probe_rows_excluding_true_contradictions.csv",
+            "binary_probe_without_contradictions_edge_case_summary_path": structural_results_dir / "structural_binary_probe_edge_case_summary_excluding_true_contradictions.csv",
+            "binary_probe_without_contradictions_edge_case_detail_path": structural_results_dir / "structural_binary_probe_edge_case_details_excluding_true_contradictions.csv",
             "subclass_probe_rows_path": structural_results_dir / "structural_subclass_probe_rows.csv",
             "subclass_probe_edge_case_summary_path": structural_results_dir / "structural_subclass_probe_edge_case_summary.csv",
             "subclass_probe_edge_case_detail_path": structural_results_dir / "structural_subclass_probe_edge_case_details.csv",
+            "subclass_probe_without_contradictions_rows_path": structural_results_dir / "structural_subclass_probe_rows_excluding_true_contradictions.csv",
+            "subclass_probe_without_contradictions_edge_case_summary_path": structural_results_dir / "structural_subclass_probe_edge_case_summary_excluding_true_contradictions.csv",
+            "subclass_probe_without_contradictions_edge_case_detail_path": structural_results_dir / "structural_subclass_probe_edge_case_details_excluding_true_contradictions.csv",
         }
 
+    use_contradiction_filtered_structural_rows = (
+        normalized_contradiction_policy == STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS
+    )
     if normalized_mode == "n_glycan_binary":
         probe_bundle = load_saved_probe_dataframe_bundle(
-            probe_rows_path=structural_output_paths["binary_probe_rows_path"],
-            edge_case_summary_path=structural_output_paths["binary_probe_edge_case_summary_path"],
-            edge_case_detail_path=structural_output_paths["binary_probe_edge_case_detail_path"],
+            probe_rows_path=(
+                structural_output_paths["binary_probe_without_contradictions_rows_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["binary_probe_rows_path"]
+            ),
+            edge_case_summary_path=(
+                structural_output_paths["binary_probe_without_contradictions_edge_case_summary_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["binary_probe_edge_case_summary_path"]
+            ),
+            edge_case_detail_path=(
+                structural_output_paths["binary_probe_without_contradictions_edge_case_detail_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["binary_probe_edge_case_detail_path"]
+            ),
         )
     else:
         probe_bundle = load_saved_probe_dataframe_bundle(
-            probe_rows_path=structural_output_paths["subclass_probe_rows_path"],
-            edge_case_summary_path=structural_output_paths["subclass_probe_edge_case_summary_path"],
-            edge_case_detail_path=structural_output_paths["subclass_probe_edge_case_detail_path"],
+            probe_rows_path=(
+                structural_output_paths["subclass_probe_without_contradictions_rows_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["subclass_probe_rows_path"]
+            ),
+            edge_case_summary_path=(
+                structural_output_paths["subclass_probe_without_contradictions_edge_case_summary_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["subclass_probe_edge_case_summary_path"]
+            ),
+            edge_case_detail_path=(
+                structural_output_paths["subclass_probe_without_contradictions_edge_case_detail_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["subclass_probe_edge_case_detail_path"]
+            ),
         )
 
     probe_bundle["probe_target_mode"] = normalized_mode
     probe_bundle["probe_label_source"] = normalized_source
+    probe_bundle["structural_contradiction_policy"] = normalized_contradiction_policy
     return probe_bundle
 
 
