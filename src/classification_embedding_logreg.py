@@ -1,8 +1,10 @@
-"""Helpers for notebook 14 binary logistic-regression probes on embeddings.
+"""Helpers for notebook 14 logistic-regression probes on embeddings.
 
-This module keeps the notebook-facing workflow for one specific comparison:
-can a simple linear classifier separate ``N-glycan`` rows from other labeled
-glycans when it only sees one saved embedding space at a time?
+This module keeps the notebook-facing workflow for lightweight linear probes on
+saved embedding spaces. The default use is still the original binary
+``N-glycan`` versus other-glycan separation task, but the helpers also support
+a harder N-glycan subclass comparison that stays inside the ``N-glycan``
+subset.
 
 The goal is not to replace notebook 10 classification fine-tuning. Instead,
 this is a lighter-weight linear-separability probe that makes it easier to
@@ -38,6 +40,7 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     confusion_matrix,
     f1_score,
+    precision_recall_fscore_support,
     precision_recall_curve,
     precision_score,
     recall_score,
@@ -68,10 +71,34 @@ from src.similarity_core import (
 )
 
 
-TARGET_COLUMN = "is_n_glycan_binary"
-TARGET_LABEL_COLUMN = "binary_target_label"
+TARGET_COLUMN = "probe_target_code"
+TARGET_LABEL_COLUMN = "probe_target_label"
+TARGET_KIND_COLUMN = "probe_target_kind"
+PREDICTED_PROBABILITY_COLUMN = "predicted_probability_target_class"
+PREDICTED_PROBABILITIES_JSON_COLUMN = "predicted_probabilities_json"
 DEFAULT_POSITIVE_LABEL = "N-glycan"
 DEFAULT_NEGATIVE_LABEL = "Not N-glycan (including unlabeled)"
+DEFAULT_BINARY_TARGET_NAME = "N-glycan vs other"
+DEFAULT_SUBCLASS_TARGET_NAME = "N-glycan subclass probe"
+SUPPORTED_PROBE_TARGET_MODES = (
+    "n_glycan_binary",
+    "n_glycan_subclass_multiclass",
+)
+SUBCLASS_EXCLUSION_REASON_COLUMN = "probe_exclusion_reason"
+N_GLYCAN_SUBCLASS_COLUMN = "n_glycan_subclass_label"
+N_GLYCAN_SUBCLASS_MATCHES_COLUMN = "n_glycan_subclass_matches"
+N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN = "n_glycan_subclass_match_count"
+DEFAULT_N_GLYCAN_SUBCLASS_CATEGORIES = (
+    "High mannose",
+    "Complex",
+    "Hybrid",
+)
+N_GLYCAN_SUBCLASS_KEYWORDS = {
+    "High mannose": ("high mannose", "high-mannose"),
+    "Complex": ("complex n", "complex-n", "bisected"),
+    "Hybrid": ("hybrid",),
+    "Paucimannose": ("paucimannose",),
+}
 REGISTRY_REQUIRED_COLUMNS = {
     "experiment_name",
     "tokenizer_family",
@@ -656,6 +683,8 @@ def build_embedding_logreg_output_paths(
         "skipped_runs_path": results_dir / "skipped_runs.csv",
         "target_summary_path": results_dir / "target_summary.csv",
         "class_summary_path": results_dir / "class_summary.csv",
+        "edge_case_summary_path": results_dir / "probe_edge_case_summary.csv",
+        "edge_case_detail_path": results_dir / "probe_edge_case_details.csv",
         "split_metrics_path": results_dir / "split_metrics.csv",
         "train_summary_path": results_dir / "train_summary.csv",
         "val_summary_path": results_dir / "val_summary.csv",
@@ -692,11 +721,75 @@ def prepare_n_glycan_probe_dataframe(
     positive_label: str = DEFAULT_POSITIVE_LABEL,
     negative_label: str = DEFAULT_NEGATIVE_LABEL,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load notebook-09 outputs and derive a binary N-glycan probe target.
+    """Backward-compatible wrapper for the original binary N-glycan probe."""
+    probe_bundle = prepare_logreg_probe_dataframe(
+        train_csv_path=train_csv_path,
+        val_csv_path=val_csv_path,
+        test_csv_path=test_csv_path,
+        label_vocabulary_path=label_vocabulary_path,
+        splits_to_include=splits_to_include,
+        probe_target_mode="n_glycan_binary",
+        exclude_unlabeled_rows=exclude_unlabeled_rows,
+        positive_label=positive_label,
+        negative_label=negative_label,
+    )
+    return probe_bundle["annotated_probe_df"], probe_bundle["label_vocabulary_df"]
 
-    When ``exclude_unlabeled_rows`` is ``False``, rows with no surviving
-    subtype labels are kept and treated as part of the non-``N-glycan`` class.
-    """
+
+def _normalize_probe_target_mode(probe_target_mode: str) -> str:
+    """Return one validated notebook-14 probe-target mode."""
+    normalized_mode = str(probe_target_mode).strip()
+    if normalized_mode not in SUPPORTED_PROBE_TARGET_MODES:
+        raise ValueError(
+            f"Unsupported probe_target_mode {probe_target_mode!r}. "
+            f"Choose from {SUPPORTED_PROBE_TARGET_MODES}."
+        )
+    return normalized_mode
+
+
+def _normalize_subclass_categories(subclass_categories: Sequence[str] | None) -> tuple[str, ...]:
+    """Return ordered, de-duplicated N-glycan subclass labels."""
+    normalized_categories: list[str] = []
+    for category_name in subclass_categories or DEFAULT_N_GLYCAN_SUBCLASS_CATEGORIES:
+        cleaned_name = str(category_name).strip()
+        if cleaned_name and cleaned_name not in normalized_categories:
+            normalized_categories.append(cleaned_name)
+    if not normalized_categories:
+        raise ValueError("At least one N-glycan subclass category is required.")
+    return tuple(normalized_categories)
+
+
+def _normalize_subtype_label_text(label_name: str) -> str:
+    """Return one normalized subtype-label string for keyword matching."""
+    normalized_label = str(label_name).strip().lower().replace("_", " ")
+    normalized_label = normalized_label.replace("-", " ")
+    normalized_label = re.sub(r"\s+", " ", normalized_label)
+    return normalized_label
+
+
+def _infer_n_glycan_subclass_matches(label_values: Sequence[str]) -> list[str]:
+    """Return each broad N-glycan subclass keyword group matched by the labels."""
+    normalized_labels = [
+        _normalize_subtype_label_text(label_name)
+        for label_name in label_values
+        if str(label_name).strip()
+    ]
+    matched_categories: list[str] = []
+    for category_name, keywords in N_GLYCAN_SUBCLASS_KEYWORDS.items():
+        if any(any(keyword in label_name for keyword in keywords) for label_name in normalized_labels):
+            matched_categories.append(category_name)
+    return matched_categories
+
+
+def _prepare_base_probe_dataframe(
+    *,
+    train_csv_path: str | Path,
+    val_csv_path: str | Path,
+    test_csv_path: str | Path,
+    label_vocabulary_path: str | Path,
+    splits_to_include: Sequence[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load notebook-09 outputs and add shared notebook-14 annotation columns."""
     classification_df = load_combined_classification_splits(
         train_csv_path=train_csv_path,
         val_csv_path=val_csv_path,
@@ -715,18 +808,252 @@ def prepare_n_glycan_probe_dataframe(
     annotated_df["is_labeled_row"] = annotated_df[LABEL_LIST_COLUMN].map(
         lambda values: bool(values) if isinstance(values, list) else False
     )
-    if exclude_unlabeled_rows:
-        annotated_df = annotated_df.loc[annotated_df["is_labeled_row"]].copy()
-
-    annotated_df[TARGET_COLUMN] = annotated_df["main_glycan_class"].eq("N-glycan").astype(int)
-    annotated_df[TARGET_LABEL_COLUMN] = annotated_df[TARGET_COLUMN].map(
-        lambda value: positive_label if int(value) == 1 else negative_label
+    annotated_df["has_multiple_labels"] = annotated_df["num_labels"].gt(1)
+    annotated_df[N_GLYCAN_SUBCLASS_MATCHES_COLUMN] = annotated_df[LABEL_LIST_COLUMN].map(_infer_n_glycan_subclass_matches)
+    annotated_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN] = annotated_df[N_GLYCAN_SUBCLASS_MATCHES_COLUMN].map(len)
+    annotated_df[N_GLYCAN_SUBCLASS_COLUMN] = annotated_df[N_GLYCAN_SUBCLASS_MATCHES_COLUMN].map(
+        lambda matches: matches[0] if len(matches) == 1 else ""
     )
     return annotated_df.reset_index(drop=True), label_vocabulary_df
 
 
-def summarize_binary_target(annotated_df: pd.DataFrame) -> pd.DataFrame:
-    """Summarize the binary target counts by split and label."""
+def _build_probe_edge_case_summary(
+    *,
+    full_df: pd.DataFrame,
+    probe_df: pd.DataFrame,
+    probe_target_mode: str,
+    subclass_categories: Sequence[str],
+) -> pd.DataFrame:
+    """Summarize notebook-14 edge cases so probe results stay interpretable."""
+    summary_rows: list[dict[str, object]] = []
+    supported_categories = set(subclass_categories)
+    ordered_splits = ["all", *STANDARD_PROBE_SPLITS]
+
+    for split_name in ordered_splits:
+        if split_name == "all":
+            split_full_df = full_df.copy()
+            split_probe_df = probe_df.copy()
+            split_label = "all"
+        else:
+            split_full_df = full_df.loc[full_df[SPLIT_COLUMN].map(str).eq(split_name)].copy()
+            split_probe_df = probe_df.loc[probe_df[SPLIT_COLUMN].map(str).eq(split_name)].copy()
+            split_label = split_name
+
+        metric_rows = [
+            ("rows_available_after_split_filter", len(split_full_df)),
+            ("rows_kept_for_probe", len(split_probe_df)),
+            ("unlabeled_rows", int((~split_full_df["is_labeled_row"]).sum())),
+            ("rows_with_multiple_subtype_labels", int(split_full_df["has_multiple_labels"].sum())),
+            ("mixed_n_o_rows", int(split_full_df["n_o_category"].map(str).eq("Mixed N/O").sum())),
+            ("n_glycan_rows", int(split_full_df["main_glycan_class"].map(str).eq("N-glycan").sum())),
+        ]
+
+        if probe_target_mode == "n_glycan_subclass_multiclass":
+            n_glycan_mask = split_full_df["main_glycan_class"].map(str).eq("N-glycan")
+            ambiguous_mask = n_glycan_mask & split_full_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].gt(1)
+            unmapped_mask = n_glycan_mask & split_full_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(0)
+            unsupported_mask = (
+                n_glycan_mask
+                & split_full_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(1)
+                & ~split_full_df[N_GLYCAN_SUBCLASS_COLUMN].isin(supported_categories)
+            )
+            supported_single_mask = (
+                n_glycan_mask
+                & split_full_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(1)
+                & split_full_df[N_GLYCAN_SUBCLASS_COLUMN].isin(supported_categories)
+            )
+            metric_rows.extend(
+                [
+                    ("n_glycan_rows_with_supported_single_subclass", int(supported_single_mask.sum())),
+                    ("n_glycan_rows_with_multiple_supported_subclasses", int(ambiguous_mask.sum())),
+                    ("n_glycan_rows_with_no_supported_subclass_match", int(unmapped_mask.sum())),
+                    ("n_glycan_rows_with_rare_or_excluded_subclass", int(unsupported_mask.sum())),
+                ]
+            )
+
+        for metric_name, metric_value in metric_rows:
+            summary_rows.append(
+                {
+                    "split": split_label,
+                    "edge_case_metric": str(metric_name),
+                    "count": int(metric_value),
+                }
+            )
+
+    return pd.DataFrame(summary_rows)
+
+
+def _build_probe_edge_case_detail_table(
+    *,
+    full_df: pd.DataFrame,
+    probe_df: pd.DataFrame,
+    probe_target_mode: str,
+    subclass_categories: Sequence[str],
+) -> pd.DataFrame:
+    """Return one detailed table for rows that deserve manual inspection."""
+    detail_df = full_df.copy()
+    detail_df["is_kept_for_probe"] = False
+    if ACCESSION_COLUMN in probe_df.columns and SEQUENCE_COLUMN in probe_df.columns and not probe_df.empty:
+        kept_keys = set(
+            zip(
+                probe_df[ACCESSION_COLUMN].fillna("").map(str),
+                probe_df[SEQUENCE_COLUMN].fillna("").map(str),
+                probe_df[SPLIT_COLUMN].fillna("").map(str),
+            )
+        )
+        detail_df["is_kept_for_probe"] = [
+            (str(accession), str(sequence), str(split_name)) in kept_keys
+            for accession, sequence, split_name in zip(
+                detail_df[ACCESSION_COLUMN].fillna("").map(str),
+                detail_df[SEQUENCE_COLUMN].fillna("").map(str),
+                detail_df[SPLIT_COLUMN].fillna("").map(str),
+            )
+        ]
+
+    detail_df[SUBCLASS_EXCLUSION_REASON_COLUMN] = ""
+    supported_categories = set(subclass_categories)
+
+    if probe_target_mode == "n_glycan_binary":
+        detail_df.loc[~detail_df["is_labeled_row"], SUBCLASS_EXCLUSION_REASON_COLUMN] = "unlabeled_row_kept_as_negative"
+        detail_df.loc[
+            detail_df["n_o_category"].map(str).eq("Mixed N/O"),
+            SUBCLASS_EXCLUSION_REASON_COLUMN,
+        ] = "mixed_n_o_labels"
+    else:
+        non_n_mask = ~detail_df["main_glycan_class"].map(str).eq("N-glycan")
+        ambiguous_mask = detail_df["main_glycan_class"].map(str).eq("N-glycan") & detail_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].gt(1)
+        unmapped_mask = detail_df["main_glycan_class"].map(str).eq("N-glycan") & detail_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(0)
+        unsupported_mask = (
+            detail_df["main_glycan_class"].map(str).eq("N-glycan")
+            & detail_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(1)
+            & ~detail_df[N_GLYCAN_SUBCLASS_COLUMN].isin(supported_categories)
+        )
+        detail_df.loc[non_n_mask, SUBCLASS_EXCLUSION_REASON_COLUMN] = "not_n_glycan_row"
+        detail_df.loc[unmapped_mask, SUBCLASS_EXCLUSION_REASON_COLUMN] = "no_supported_n_glycan_subclass_match"
+        detail_df.loc[ambiguous_mask, SUBCLASS_EXCLUSION_REASON_COLUMN] = "multiple_supported_n_glycan_subclasses"
+        detail_df.loc[unsupported_mask, SUBCLASS_EXCLUSION_REASON_COLUMN] = "rare_or_excluded_n_glycan_subclass"
+
+    detail_df = detail_df.loc[
+        detail_df["has_multiple_labels"]
+        | detail_df["n_o_category"].map(str).eq("Mixed N/O")
+        | detail_df[SUBCLASS_EXCLUSION_REASON_COLUMN].ne("")
+    ].copy()
+
+    if detail_df.empty:
+        return detail_df
+
+    detail_df[N_GLYCAN_SUBCLASS_MATCHES_COLUMN] = detail_df[N_GLYCAN_SUBCLASS_MATCHES_COLUMN].map(
+        lambda values: " | ".join(values)
+    )
+    return _select_existing_columns(
+        detail_df,
+        [
+            SPLIT_COLUMN,
+            ACCESSION_COLUMN,
+            SEQUENCE_COLUMN,
+            "main_glycan_class",
+            "n_o_category",
+            "num_labels",
+            "has_multiple_labels",
+            "label_signature",
+            N_GLYCAN_SUBCLASS_COLUMN,
+            N_GLYCAN_SUBCLASS_MATCHES_COLUMN,
+            N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN,
+            "is_kept_for_probe",
+            SUBCLASS_EXCLUSION_REASON_COLUMN,
+        ],
+    )
+
+
+def prepare_logreg_probe_dataframe(
+    *,
+    train_csv_path: str | Path,
+    val_csv_path: str | Path,
+    test_csv_path: str | Path,
+    label_vocabulary_path: str | Path,
+    splits_to_include: Sequence[str] | None = None,
+    probe_target_mode: str = "n_glycan_binary",
+    exclude_unlabeled_rows: bool = False,
+    positive_label: str = DEFAULT_POSITIVE_LABEL,
+    negative_label: str = DEFAULT_NEGATIVE_LABEL,
+    subclass_categories: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Load notebook-09 outputs and derive one notebook-14 probe target table."""
+    normalized_mode = _normalize_probe_target_mode(probe_target_mode)
+    normalized_subclass_categories = _normalize_subclass_categories(subclass_categories)
+    annotated_df, label_vocabulary_df = _prepare_base_probe_dataframe(
+        train_csv_path=train_csv_path,
+        val_csv_path=val_csv_path,
+        test_csv_path=test_csv_path,
+        label_vocabulary_path=label_vocabulary_path,
+        splits_to_include=splits_to_include,
+    )
+    full_df = annotated_df.copy()
+
+    if normalized_mode == "n_glycan_binary":
+        probe_df = annotated_df.copy()
+        if exclude_unlabeled_rows:
+            probe_df = probe_df.loc[probe_df["is_labeled_row"]].copy()
+        probe_df[TARGET_COLUMN] = probe_df["main_glycan_class"].eq("N-glycan").astype(int)
+        probe_df[TARGET_LABEL_COLUMN] = probe_df[TARGET_COLUMN].map(
+            lambda value: positive_label if int(value) == 1 else negative_label
+        )
+        probe_df[TARGET_KIND_COLUMN] = "binary"
+        probe_target_name = DEFAULT_BINARY_TARGET_NAME
+    else:
+        probe_df = annotated_df.loc[
+            annotated_df["main_glycan_class"].map(str).eq("N-glycan")
+        ].copy()
+        probe_df = probe_df.loc[
+            probe_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(1)
+            & probe_df[N_GLYCAN_SUBCLASS_COLUMN].isin(normalized_subclass_categories)
+        ].copy()
+        subclass_code_lookup = {
+            subclass_name: subclass_index
+            for subclass_index, subclass_name in enumerate(normalized_subclass_categories)
+        }
+        probe_df[TARGET_LABEL_COLUMN] = probe_df[N_GLYCAN_SUBCLASS_COLUMN].map(str)
+        probe_df[TARGET_COLUMN] = probe_df[TARGET_LABEL_COLUMN].map(subclass_code_lookup).astype(int)
+        probe_df[TARGET_KIND_COLUMN] = "multiclass"
+        probe_target_name = DEFAULT_SUBCLASS_TARGET_NAME
+
+    probe_df["probe_target_mode"] = normalized_mode
+    probe_df["probe_target_name"] = probe_target_name
+    probe_df = probe_df.reset_index(drop=True)
+
+    target_summary_df = summarize_probe_target(probe_df)
+    class_summary_df = summarize_main_glycan_class_by_split(probe_df)
+    edge_case_summary_df = _build_probe_edge_case_summary(
+        full_df=full_df,
+        probe_df=probe_df,
+        probe_target_mode=normalized_mode,
+        subclass_categories=normalized_subclass_categories,
+    )
+    edge_case_detail_df = _build_probe_edge_case_detail_table(
+        full_df=full_df,
+        probe_df=probe_df,
+        probe_target_mode=normalized_mode,
+        subclass_categories=normalized_subclass_categories,
+    )
+
+    return {
+        "annotated_probe_df": probe_df,
+        "full_annotated_df": full_df,
+        "label_vocabulary_df": label_vocabulary_df,
+        "target_summary_df": target_summary_df,
+        "class_summary_df": class_summary_df,
+        "edge_case_summary_df": edge_case_summary_df,
+        "edge_case_detail_df": edge_case_detail_df,
+        "probe_target_mode": normalized_mode,
+        "probe_target_name": probe_target_name,
+        "subclass_categories": normalized_subclass_categories,
+    }
+
+
+def summarize_probe_target(annotated_df: pd.DataFrame) -> pd.DataFrame:
+    """Summarize the active notebook-14 target counts by split and label."""
+    if annotated_df.empty:
+        return pd.DataFrame(columns=[SPLIT_COLUMN, TARGET_LABEL_COLUMN, "count"])
     summary_df = (
         annotated_df.groupby([SPLIT_COLUMN, TARGET_LABEL_COLUMN], dropna=False)
         .size()
@@ -736,6 +1063,11 @@ def summarize_binary_target(annotated_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     return summary_df
+
+
+def summarize_binary_target(annotated_df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible alias for the original binary target summary."""
+    return summarize_probe_target(annotated_df)
 
 
 def summarize_main_glycan_class_by_split(annotated_df: pd.DataFrame) -> pd.DataFrame:
@@ -939,7 +1271,7 @@ def _build_row_embedding_matrix(
     return normalized_embeddings[row_indices]
 
 
-def fit_binary_logistic_probe(
+def fit_logistic_probe(
     train_embeddings: np.ndarray,
     train_targets: np.ndarray,
     *,
@@ -949,6 +1281,8 @@ def fit_binary_logistic_probe(
     random_state: int = 42,
 ) -> Pipeline:
     """Fit one standardized logistic-regression probe."""
+    num_target_classes = len(np.unique(train_targets))
+    solver_name = "liblinear" if num_target_classes == 2 else "lbfgs"
     probe_model = Pipeline(
         steps=[
             ("scaler", StandardScaler()),
@@ -959,7 +1293,8 @@ def fit_binary_logistic_probe(
                     class_weight=class_weight,
                     max_iter=int(max_iter),
                     random_state=int(random_state),
-                    solver="liblinear",
+                    solver=solver_name,
+                    multi_class="auto",
                 ),
             ),
         ]
@@ -976,7 +1311,7 @@ def _safe_metric(metric_fn, *args, **kwargs) -> float:
         return float("nan")
 
 
-def evaluate_binary_logistic_probe(
+def evaluate_logistic_probe(
     probe_model: Pipeline,
     split_df: pd.DataFrame,
     split_embeddings: np.ndarray,
@@ -987,35 +1322,91 @@ def evaluate_binary_logistic_probe(
 ) -> tuple[dict[str, Any], pd.DataFrame]:
     """Evaluate one trained probe on one split."""
     target_values = split_df[TARGET_COLUMN].to_numpy(dtype=int)
-    predicted_probabilities = probe_model.predict_proba(split_embeddings)[:, 1]
-    predicted_labels = (predicted_probabilities >= float(probability_threshold)).astype(int)
-
-    tn, fp, fn, tp = confusion_matrix(
-        target_values,
-        predicted_labels,
-        labels=[0, 1],
-    ).ravel()
+    predicted_labels = probe_model.predict(split_embeddings).astype(int)
+    predicted_probability_matrix = probe_model.predict_proba(split_embeddings)
+    model_classes = probe_model.named_steps["logreg"].classes_
+    num_target_classes = len(model_classes)
 
     metric_row = {
         **dict(run_spec),
         "split": str(split_name),
         "row_count": int(len(split_df)),
-        "positive_count": int(target_values.sum()),
-        "negative_count": int(len(target_values) - target_values.sum()),
-        "positive_rate": float(target_values.mean()) if len(target_values) else float("nan"),
         "threshold": float(probability_threshold),
         "accuracy": float(accuracy_score(target_values, predicted_labels)),
         "balanced_accuracy": _safe_metric(balanced_accuracy_score, target_values, predicted_labels),
-        "precision": _safe_metric(precision_score, target_values, predicted_labels, zero_division=0),
-        "recall": _safe_metric(recall_score, target_values, predicted_labels, zero_division=0),
-        "f1": _safe_metric(f1_score, target_values, predicted_labels, zero_division=0),
-        "roc_auc": _safe_metric(roc_auc_score, target_values, predicted_probabilities),
-        "average_precision": _safe_metric(average_precision_score, target_values, predicted_probabilities),
-        "tn": int(tn),
-        "fp": int(fp),
-        "fn": int(fn),
-        "tp": int(tp),
+        "target_kind": "binary" if num_target_classes == 2 else "multiclass",
+        "target_class_count": int(num_target_classes),
     }
+
+    target_label_lookup = (
+        split_df[[TARGET_COLUMN, TARGET_LABEL_COLUMN]]
+        .drop_duplicates()
+        .sort_values(TARGET_COLUMN, kind="stable")
+    )
+    code_to_label_lookup = {
+        int(row[TARGET_COLUMN]): str(row[TARGET_LABEL_COLUMN])
+        for _, row in target_label_lookup.iterrows()
+    }
+    ordered_target_labels = [code_to_label_lookup.get(int(class_code), str(class_code)) for class_code in model_classes]
+
+    if num_target_classes == 2:
+        positive_class_index = int(np.where(model_classes == 1)[0][0]) if 1 in model_classes else 1
+        predicted_probabilities = predicted_probability_matrix[:, positive_class_index]
+        predicted_binary_labels = (predicted_probabilities >= float(probability_threshold)).astype(int)
+        tn, fp, fn, tp = confusion_matrix(
+            target_values,
+            predicted_binary_labels,
+            labels=[0, 1],
+        ).ravel()
+        metric_row.update(
+            {
+                "positive_count": int(target_values.sum()),
+                "negative_count": int(len(target_values) - target_values.sum()),
+                "positive_rate": float(target_values.mean()) if len(target_values) else float("nan"),
+                "precision": _safe_metric(precision_score, target_values, predicted_binary_labels, zero_division=0),
+                "recall": _safe_metric(recall_score, target_values, predicted_binary_labels, zero_division=0),
+                "f1": _safe_metric(f1_score, target_values, predicted_binary_labels, zero_division=0),
+                "macro_precision": _safe_metric(precision_score, target_values, predicted_binary_labels, zero_division=0),
+                "macro_recall": _safe_metric(recall_score, target_values, predicted_binary_labels, zero_division=0),
+                "macro_f1": _safe_metric(f1_score, target_values, predicted_binary_labels, zero_division=0),
+                "weighted_f1": _safe_metric(f1_score, target_values, predicted_binary_labels, average="weighted", zero_division=0),
+                "roc_auc": _safe_metric(roc_auc_score, target_values, predicted_probabilities),
+                "average_precision": _safe_metric(average_precision_score, target_values, predicted_probabilities),
+                "tn": int(tn),
+                "fp": int(fp),
+                "fn": int(fn),
+                "tp": int(tp),
+                "confusion_matrix_json": json.dumps([[int(tn), int(fp)], [int(fn), int(tp)]]),
+                "target_label_order_json": json.dumps([code_to_label_lookup.get(0, "0"), code_to_label_lookup.get(1, "1")]),
+            }
+        )
+    else:
+        macro_precision, macro_recall, macro_f1, _ = precision_recall_fscore_support(
+            target_values,
+            predicted_labels,
+            average="macro",
+            zero_division=0,
+        )
+        weighted_f1 = f1_score(target_values, predicted_labels, average="weighted", zero_division=0)
+        multiclass_confusion = confusion_matrix(target_values, predicted_labels, labels=model_classes)
+        metric_row.update(
+            {
+                "positive_count": float("nan"),
+                "negative_count": float("nan"),
+                "positive_rate": float("nan"),
+                "precision": float(macro_precision),
+                "recall": float(macro_recall),
+                "f1": float(macro_f1),
+                "macro_precision": float(macro_precision),
+                "macro_recall": float(macro_recall),
+                "macro_f1": float(macro_f1),
+                "weighted_f1": float(weighted_f1),
+                "roc_auc": float("nan"),
+                "average_precision": float("nan"),
+                "confusion_matrix_json": json.dumps(multiclass_confusion.astype(int).tolist()),
+                "target_label_order_json": json.dumps(ordered_target_labels),
+            }
+        )
 
     # Keep the saved prediction table compact and notebook-friendly by carrying
     # forward only the columns that help interpret class balance and errors.
@@ -1031,9 +1422,25 @@ def evaluate_binary_logistic_probe(
     ]
     available_prediction_columns = [column for column in prediction_columns if column in split_df.columns]
     prediction_df = split_df.loc[:, available_prediction_columns].copy()
-    prediction_df["predicted_probability_n_glycan"] = predicted_probabilities
     prediction_df["predicted_label"] = predicted_labels
+    prediction_df["predicted_label_name"] = [
+        code_to_label_lookup.get(int(label_code), str(label_code))
+        for label_code in predicted_labels
+    ]
     prediction_df["correct_prediction"] = (predicted_labels == target_values).astype(int)
+    if num_target_classes == 2:
+        prediction_df[PREDICTED_PROBABILITY_COLUMN] = predicted_probabilities
+    else:
+        prediction_df[PREDICTED_PROBABILITIES_JSON_COLUMN] = [
+            json.dumps(
+                {
+                    code_to_label_lookup.get(int(class_code), str(class_code)): float(class_probability)
+                    for class_code, class_probability in zip(model_classes, row_probabilities)
+                },
+                sort_keys=True,
+            )
+            for row_probabilities in predicted_probability_matrix
+        ]
     prediction_df["display_label"] = run_spec.get("display_label", "")
     prediction_df["model_variant"] = run_spec.get("model_variant", "")
     prediction_df["architecture_label"] = run_spec.get("architecture_label", "")
@@ -1129,6 +1536,11 @@ def _iter_split_prediction_groups(
     return grouped_frames
 
 
+def _prediction_group_is_binary(model_df: pd.DataFrame) -> bool:
+    """Return True when one prediction group carries binary-probe probabilities."""
+    return PREDICTED_PROBABILITY_COLUMN in model_df.columns and model_df[TARGET_COLUMN].nunique() >= 2
+
+
 def _plot_roc_curve_comparison(
     prediction_df: pd.DataFrame,
     *,
@@ -1140,7 +1552,7 @@ def _plot_roc_curve_comparison(
     valid_groups = [
         (model_variant, display_label, model_df)
         for model_variant, display_label, model_df in grouped_frames
-        if model_df[TARGET_COLUMN].nunique() >= 2
+        if _prediction_group_is_binary(model_df)
     ]
     if not valid_groups:
         return None
@@ -1151,7 +1563,7 @@ def _plot_roc_curve_comparison(
 
     for model_variant, display_label, model_df in valid_groups:
         target_values = model_df[TARGET_COLUMN].to_numpy(dtype=int)
-        predicted_probabilities = model_df["predicted_probability_n_glycan"].to_numpy(dtype=float)
+        predicted_probabilities = model_df[PREDICTED_PROBABILITY_COLUMN].to_numpy(dtype=float)
         fpr, tpr, _ = roc_curve(target_values, predicted_probabilities)
         auc_value = _safe_metric(roc_auc_score, target_values, predicted_probabilities)
         axis.plot(
@@ -1187,7 +1599,7 @@ def _plot_precision_recall_comparison(
     valid_groups = [
         (model_variant, display_label, model_df)
         for model_variant, display_label, model_df in grouped_frames
-        if model_df[TARGET_COLUMN].nunique() >= 2
+        if _prediction_group_is_binary(model_df)
     ]
     if not valid_groups:
         return None
@@ -1198,7 +1610,7 @@ def _plot_precision_recall_comparison(
 
     for model_variant, display_label, model_df in valid_groups:
         target_values = model_df[TARGET_COLUMN].to_numpy(dtype=int)
-        predicted_probabilities = model_df["predicted_probability_n_glycan"].to_numpy(dtype=float)
+        predicted_probabilities = model_df[PREDICTED_PROBABILITY_COLUMN].to_numpy(dtype=float)
         precision_values, recall_values, _ = precision_recall_curve(target_values, predicted_probabilities)
         ap_value = _safe_metric(average_precision_score, target_values, predicted_probabilities)
         axis.plot(
@@ -1254,7 +1666,7 @@ def _plot_confusion_matrix_grid(
     axes_flat = axes.ravel()
 
     for axis, row in zip(axes_flat, split_metrics_df.itertuples(index=False)):
-        matrix = np.array([[int(row.tn), int(row.fp)], [int(row.fn), int(row.tp)]], dtype=float)
+        matrix = np.array(json.loads(str(row.confusion_matrix_json)), dtype=float)
         axis.imshow(matrix, cmap="Blues")
         for row_index in range(matrix.shape[0]):
             for column_index in range(matrix.shape[1]):
@@ -1268,13 +1680,18 @@ def _plot_confusion_matrix_grid(
                     fontsize=11,
                     fontweight="bold",
                 )
-        axis.set_xticks([0, 1])
-        axis.set_xticklabels(["Pred 0", "Pred 1"])
-        axis.set_yticks([0, 1])
-        axis.set_yticklabels(["True 0", "True 1"])
+        target_labels = json.loads(str(getattr(row, "target_label_order_json", "[]")))
+        if not target_labels:
+            target_labels = [str(index_value) for index_value in range(matrix.shape[0])]
+        axis.set_xticks(np.arange(len(target_labels)))
+        axis.set_xticklabels(target_labels, rotation=45, ha="right")
+        axis.set_yticks(np.arange(len(target_labels)))
+        axis.set_yticklabels(target_labels)
+        metric_label = "F1" if str(getattr(row, "target_kind", "binary")) == "binary" else "Macro F1"
+        f1_value = float(getattr(row, "f1", float("nan")))
         axis.set_title(
             f"{MODEL_VARIANT_LABELS.get(row.model_variant, row.model_variant)}\n"
-            f"Acc {float(row.accuracy):.3f} | F1 {float(row.f1):.3f}"
+            f"Acc {float(row.accuracy):.3f} | {metric_label} {f1_value:.3f}"
         )
         axis.set_xlabel("Predicted label")
         axis.set_ylabel("True label")
@@ -1298,6 +1715,11 @@ def _plot_probability_histogram_grid(
 ) -> Path | None:
     """Save one grid of probability histograms split by true class."""
     grouped_frames = _iter_split_prediction_groups(prediction_df, split_name)
+    grouped_frames = [
+        (model_variant, display_label, model_df)
+        for model_variant, display_label, model_df in grouped_frames
+        if _prediction_group_is_binary(model_df)
+    ]
     if not grouped_frames:
         return None
 
@@ -1317,8 +1739,8 @@ def _plot_probability_histogram_grid(
 
     bins = np.linspace(0.0, 1.0, 21)
     for axis, (model_variant, _, model_df) in zip(axes_flat, grouped_frames):
-        negative_scores = model_df.loc[model_df[TARGET_COLUMN].eq(0), "predicted_probability_n_glycan"].to_numpy(dtype=float)
-        positive_scores = model_df.loc[model_df[TARGET_COLUMN].eq(1), "predicted_probability_n_glycan"].to_numpy(dtype=float)
+        negative_scores = model_df.loc[model_df[TARGET_COLUMN].eq(0), PREDICTED_PROBABILITY_COLUMN].to_numpy(dtype=float)
+        positive_scores = model_df.loc[model_df[TARGET_COLUMN].eq(1), PREDICTED_PROBABILITY_COLUMN].to_numpy(dtype=float)
         axis.hist(
             negative_scores,
             bins=bins,
@@ -1335,7 +1757,7 @@ def _plot_probability_histogram_grid(
         )
         axis.axvline(float(probability_threshold), linestyle="--", color="#111827", linewidth=1.2)
         axis.set_title(MODEL_VARIANT_LABELS.get(model_variant, model_variant))
-        axis.set_xlabel("Predicted probability of N-glycan")
+        axis.set_xlabel("Predicted probability of the positive class")
         axis.set_ylabel("Row count")
         axis.set_xlim(0.0, 1.0)
         axis.grid(alpha=0.16)
@@ -1941,15 +2363,21 @@ def _build_public_metric_summary_table(summary_df: pd.DataFrame) -> pd.DataFrame
         [
             "display_label",
             "model_variant",
+            "target_kind",
+            "target_class_count",
             "comparison_label",
             "layer_label",
             "embedding_layer_index",
             "snapshot_label",
             "row_count",
             "positive_count",
+            "precision",
+            "recall",
             "roc_auc",
             "average_precision",
             "f1",
+            "macro_f1",
+            "weighted_f1",
             "balanced_accuracy",
             "accuracy",
         ],
@@ -2037,6 +2465,8 @@ def render_embedding_logreg_html_report(
     manifest_df: pd.DataFrame,
     target_summary_df: pd.DataFrame,
     class_summary_df: pd.DataFrame,
+    edge_case_summary_df: pd.DataFrame | None = None,
+    edge_case_detail_df: pd.DataFrame | None = None,
     train_summary_df: pd.DataFrame,
     val_summary_df: pd.DataFrame,
     test_summary_df: pd.DataFrame,
@@ -2067,6 +2497,26 @@ def render_embedding_logreg_html_report(
     public_manifest_df = _build_public_manifest_table(manifest_df)
     public_test_summary_df = _build_public_metric_summary_table(test_summary_df)
     public_skipped_df = _build_public_skipped_table(skipped_df)
+    public_edge_case_summary_df = _select_existing_columns(
+        pd.DataFrame(edge_case_summary_df if edge_case_summary_df is not None else pd.DataFrame()),
+        ["split", "edge_case_metric", "count"],
+    )
+    public_edge_case_detail_df = _select_existing_columns(
+        pd.DataFrame(edge_case_detail_df if edge_case_detail_df is not None else pd.DataFrame()),
+        [
+            SPLIT_COLUMN,
+            ACCESSION_COLUMN,
+            "main_glycan_class",
+            "n_o_category",
+            "num_labels",
+            "has_multiple_labels",
+            "label_signature",
+            N_GLYCAN_SUBCLASS_COLUMN,
+            N_GLYCAN_SUBCLASS_MATCHES_COLUMN,
+            "is_kept_for_probe",
+            SUBCLASS_EXCLUSION_REASON_COLUMN,
+        ],
+    )
     snapshot_analysis = dict(snapshot_analysis or {})
     comparison_axis_name = str(snapshot_analysis.get("comparison_axis_name", "")).strip()
     if not comparison_axis_name:
@@ -2147,6 +2597,19 @@ def render_embedding_logreg_html_report(
             "<div class='table-wrap'>"
             f"{_render_dataframe_html(public_test_summary_df)}"
             "</div>"
+            "</section>"
+        )
+
+    edge_case_section_html = ""
+    if not public_edge_case_summary_df.empty or not public_edge_case_detail_df.empty:
+        edge_case_section_html = (
+            "<section>"
+            "<h2>Probe edge cases</h2>"
+            "<p class='subtle'>These tables flag rows that are unlabeled, carry multiple subtype labels, "
+            "mix broad glycan families, or fall outside the kept N-glycan subclass buckets.</p>"
+            f"<div class='table-wrap'>{_render_dataframe_html(public_edge_case_summary_df)}</div>"
+            "<h3>Edge-case detail rows</h3>"
+            f"<div class='table-wrap'>{_render_dataframe_html(public_edge_case_detail_df)}</div>"
             "</section>"
         )
 
@@ -2395,6 +2858,7 @@ def render_embedding_logreg_html_report(
 		    </section>
 		    {test_diagnostic_section_html}
 		    {test_summary_section_html}
+            {edge_case_section_html}
             {snapshot_section_html}
 		  </main>
 		</body>
@@ -2588,9 +3052,25 @@ def build_metric_split_summary(metrics_df: pd.DataFrame, split_name: str) -> pd.
             kind="stable",
         ).reset_index(drop=True)
     else:
+        preferred_sort_columns = [
+            "roc_auc",
+            "average_precision",
+            "f1",
+            "macro_f1",
+            "weighted_f1",
+            "balanced_accuracy",
+            "accuracy",
+        ]
+        available_sort_columns = [
+            column_name
+            for column_name in preferred_sort_columns
+            if column_name in summary_df.columns and not summary_df[column_name].isna().all()
+        ]
+        if not available_sort_columns:
+            available_sort_columns = ["display_label"]
         summary_df = summary_df.sort_values(
-            ["roc_auc", "average_precision", "f1", "balanced_accuracy"],
-            ascending=False,
+            available_sort_columns,
+            ascending=[False] * len(available_sort_columns),
             kind="stable",
         ).reset_index(drop=True)
     return summary_df
@@ -2635,6 +3115,9 @@ def run_embedding_logreg_suite(
     run_specs: Sequence[Mapping[str, Any]],
     checkpoints_dir: str | Path,
     output_paths: Mapping[str, Path],
+    target_summary_df: pd.DataFrame | None = None,
+    edge_case_summary_df: pd.DataFrame | None = None,
+    edge_case_detail_df: pd.DataFrame | None = None,
     pooling_strategy: str = "mean",
     embedding_layer_index: int | None = None,
     batch_size: int = 32,
@@ -2682,6 +3165,8 @@ def run_embedding_logreg_suite(
         "skipped_runs_path": output_paths["skipped_runs_path"],
         "target_summary_path": output_paths["target_summary_path"],
         "class_summary_path": output_paths["class_summary_path"],
+        "edge_case_summary_path": output_paths["edge_case_summary_path"],
+        "edge_case_detail_path": output_paths["edge_case_detail_path"],
         "split_metrics_path": output_paths["split_metrics_path"],
         "train_summary_path": output_paths["train_summary_path"],
         "val_summary_path": output_paths["val_summary_path"],
@@ -2720,10 +3205,15 @@ def run_embedding_logreg_suite(
         overwrite_existing_outputs=overwrite_existing_outputs,
     )
 
-    target_summary_df = summarize_binary_target(annotated_df)
+    if target_summary_df is None:
+        target_summary_df = summarize_probe_target(annotated_df)
     target_summary_df.to_csv(output_paths["target_summary_path"], index=False)
     class_summary_df = summarize_main_glycan_class_by_split(annotated_df)
     class_summary_df.to_csv(output_paths["class_summary_path"], index=False)
+    edge_case_summary_df = pd.DataFrame(edge_case_summary_df if edge_case_summary_df is not None else pd.DataFrame())
+    edge_case_detail_df = pd.DataFrame(edge_case_detail_df if edge_case_detail_df is not None else pd.DataFrame())
+    edge_case_summary_df.to_csv(output_paths["edge_case_summary_path"], index=False)
+    edge_case_detail_df.to_csv(output_paths["edge_case_detail_path"], index=False)
     manifest_df.to_csv(output_paths["run_manifest_path"], index=False)
 
     all_metric_rows: list[dict[str, Any]] = []
@@ -2771,15 +3261,16 @@ def run_embedding_logreg_suite(
             raise ValueError(f"No train rows were found for run spec: {run_spec}")
 
         train_targets = run_df.loc[train_mask, TARGET_COLUMN].to_numpy(dtype=int)
-        if len(np.unique(train_targets)) < 2:
+        num_train_classes = len(np.unique(train_targets))
+        if num_train_classes < 2:
             raise ValueError(
-                "The train split for the N-glycan probe only contains one class. "
+                "The train split for the notebook-14 probe only contains one class. "
                 "Adjust the filtering settings before rerunning."
             )
 
         # Fit one simple linear probe on the train split only. The same fitted
         # probe is then carried unchanged into validation and test.
-        probe_model = fit_binary_logistic_probe(
+        probe_model = fit_logistic_probe(
             train_embeddings=row_embeddings[train_mask.to_numpy()],
             train_targets=train_targets,
             regularization_c=regularization_c,
@@ -2795,7 +3286,7 @@ def run_embedding_logreg_suite(
             if not split_mask.any():
                 continue
 
-            metric_row, prediction_df = evaluate_binary_logistic_probe(
+            metric_row, prediction_df = evaluate_logistic_probe(
                 probe_model=probe_model,
                 split_df=run_df.loc[split_mask].reset_index(drop=True),
                 split_embeddings=row_embeddings[split_mask.to_numpy()],
@@ -2929,6 +3420,8 @@ def run_embedding_logreg_suite(
         manifest_df=manifest_df,
         target_summary_df=target_summary_df,
         class_summary_df=class_summary_df,
+        edge_case_summary_df=edge_case_summary_df,
+        edge_case_detail_df=edge_case_detail_df,
         train_summary_df=split_summaries["train"],
         val_summary_df=split_summaries["val"],
         test_summary_df=split_summaries["test"],
@@ -2941,6 +3434,8 @@ def run_embedding_logreg_suite(
     return {
         "target_summary_df": target_summary_df,
         "class_summary_df": class_summary_df,
+        "edge_case_summary_df": edge_case_summary_df,
+        "edge_case_detail_df": edge_case_detail_df,
         "manifest_df": manifest_df,
         "skipped_df": skipped_df,
         "metrics_df": metrics_df,
