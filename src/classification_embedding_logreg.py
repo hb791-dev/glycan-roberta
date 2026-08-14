@@ -56,6 +56,7 @@ from src.classification_embedding_umap import (
     filter_classification_dataframe_by_split,
     load_combined_classification_splits,
     resolve_embedding_model_dir,
+    transform_umap_projection,
 )
 from src.classification_training import ACCESSION_COLUMN, LABEL_LIST_COLUMN, SEQUENCE_COLUMN, SPLIT_COLUMN
 from src.notebook_utils import require_existing_path, stringify_path_values, validate_output_paths, write_json
@@ -1353,7 +1354,14 @@ def _build_snapshot_umap_long_dataframe(
     umap_metric: str,
     umap_random_state: int,
 ) -> pd.DataFrame:
-    """Build one long dataframe with shared-UMAP coordinates for each snapshot."""
+    """Build one long dataframe with anchor-based UMAP coordinates for each snapshot.
+
+    The first ordered snapshot becomes the anchor space. Later snapshots are
+    projected into that fitted space with ``transform`` so the panels are easier
+    to compare directly. If two snapshots produce numerically identical row
+    embeddings, the later snapshot reuses the earlier snapshot's coordinates
+    instead of getting a second, potentially misleading UMAP layout.
+    """
     if not completed_run_specs:
         return pd.DataFrame()
 
@@ -1364,30 +1372,66 @@ def _build_snapshot_umap_long_dataframe(
             str(run_spec.get("display_label", "")),
         ),
     )
-    embedding_blocks = [row_embeddings_by_run_slug[build_run_slug(run_spec)] for run_spec in ordered_specs]
-    stacked_embeddings = np.vstack(embedding_blocks)
-    shared_coordinates = compute_umap_projection(
-        stacked_embeddings,
+    anchor_run_spec = ordered_specs[0]
+    anchor_run_slug = build_run_slug(anchor_run_spec)
+    anchor_embeddings = row_embeddings_by_run_slug[anchor_run_slug]
+    anchor_coordinates, reducer = compute_umap_projection(
+        anchor_embeddings,
         n_neighbors=umap_neighbors,
         min_dist=umap_min_dist,
         metric=umap_metric,
         random_state=umap_random_state,
+        return_reducer=True,
     )
 
+    snapshot_coordinates_by_slug: dict[str, np.ndarray] = {anchor_run_slug: anchor_coordinates}
+    duplicate_snapshot_lookup: dict[str, str] = {}
+    seen_run_slugs: list[str] = [anchor_run_slug]
+
+    for run_spec in ordered_specs[1:]:
+        run_slug = build_run_slug(run_spec)
+        run_embeddings = row_embeddings_by_run_slug[run_slug]
+        duplicate_source_slug = next(
+            (
+                seen_run_slug
+                for seen_run_slug in seen_run_slugs
+                if np.allclose(run_embeddings, row_embeddings_by_run_slug[seen_run_slug], atol=1e-8, rtol=1e-6)
+            ),
+            "",
+        )
+        if duplicate_source_slug:
+            snapshot_coordinates_by_slug[run_slug] = snapshot_coordinates_by_slug[duplicate_source_slug].copy()
+            duplicate_snapshot_lookup[run_slug] = duplicate_source_slug
+        else:
+            snapshot_coordinates_by_slug[run_slug] = transform_umap_projection(run_embeddings, reducer)
+        seen_run_slugs.append(run_slug)
+
     coordinate_frames: list[pd.DataFrame] = []
-    start_index = 0
-    num_rows = len(annotated_df)
     for run_spec in ordered_specs:
-        end_index = start_index + num_rows
-        snapshot_coordinates = shared_coordinates[start_index:end_index]
+        run_slug = build_run_slug(run_spec)
+        snapshot_coordinates = snapshot_coordinates_by_slug[run_slug]
         snapshot_df = build_umap_dataframe(annotated_df, snapshot_coordinates)
-        snapshot_df["run_slug"] = build_run_slug(run_spec)
+        snapshot_df["run_slug"] = run_slug
         snapshot_df["display_label"] = str(run_spec.get("display_label", ""))
         snapshot_df["model_variant"] = str(run_spec.get("model_variant", ""))
         snapshot_df["snapshot_label"] = str(run_spec.get("snapshot_label", ""))
         snapshot_df["snapshot_order"] = int(run_spec.get("snapshot_order", 0))
+        duplicate_source_slug = duplicate_snapshot_lookup.get(run_slug, "")
+        duplicate_source_label = ""
+        if duplicate_source_slug:
+            duplicate_source_spec = next(
+                (
+                    one_run_spec
+                    for one_run_spec in ordered_specs
+                    if build_run_slug(one_run_spec) == duplicate_source_slug
+                ),
+                None,
+            )
+            if duplicate_source_spec is not None:
+                duplicate_source_label = str(duplicate_source_spec.get("snapshot_label", ""))
+        snapshot_df["is_duplicate_snapshot"] = bool(duplicate_source_slug)
+        snapshot_df["duplicate_snapshot_of"] = duplicate_source_label
         coordinate_frames.append(snapshot_df)
-        start_index = end_index
 
     return pd.concat(coordinate_frames, ignore_index=True)
 
@@ -1478,7 +1522,19 @@ def _plot_snapshot_umap_grid(
                 zorder=5,
             )
 
-        axis.set_title(str(row.snapshot_label))
+        duplicate_source_label = ""
+        if "duplicate_snapshot_of" in panel_df.columns and not panel_df.empty:
+            duplicate_source_values = [
+                str(value).strip()
+                for value in panel_df["duplicate_snapshot_of"].dropna().map(str).tolist()
+                if str(value).strip()
+            ]
+            if duplicate_source_values:
+                duplicate_source_label = duplicate_source_values[0]
+        panel_title = str(row.snapshot_label)
+        if duplicate_source_label:
+            panel_title = f"{panel_title}\n(reuses {duplicate_source_label} coordinates)"
+        axis.set_title(panel_title)
         axis.set_xlabel("UMAP 1")
         axis.set_ylabel("UMAP 2")
         axis.grid(alpha=0.16)

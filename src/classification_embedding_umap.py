@@ -379,14 +379,27 @@ def build_classification_umap_output_paths(
     }
 
 
+def _to_embedding_array(embeddings) -> np.ndarray:
+    """Return embeddings as one NumPy float array."""
+    if hasattr(embeddings, "detach"):
+        return embeddings.detach().cpu().numpy()
+    return np.asarray(embeddings, dtype=float)
+
+
 def compute_umap_projection(
     embeddings,
     n_neighbors: int = 15,
     min_dist: float = 0.10,
     metric: str = "cosine",
     random_state: int = 42,
-) -> np.ndarray:
-    """Project embeddings to two dimensions with UMAP."""
+    return_reducer: bool = False,
+):
+    """Project embeddings to two dimensions with UMAP.
+
+    When ``return_reducer`` is ``True``, this helper also returns the fitted
+    reducer so later embedding sets can be transformed into the same UMAP
+    coordinate space.
+    """
     try:
         import umap
     except ImportError as error:
@@ -394,10 +407,7 @@ def compute_umap_projection(
             "UMAP is not installed. Install the 'umap-learn' package before running this notebook."
         ) from error
 
-    if hasattr(embeddings, "detach"):
-        embedding_array = embeddings.detach().cpu().numpy()
-    else:
-        embedding_array = np.asarray(embeddings, dtype=float)
+    embedding_array = _to_embedding_array(embeddings)
 
     reducer = umap.UMAP(
         n_components=2,
@@ -406,7 +416,16 @@ def compute_umap_projection(
         metric=str(metric),
         random_state=int(random_state),
     )
-    return reducer.fit_transform(embedding_array)
+    coordinates = reducer.fit_transform(embedding_array)
+    if return_reducer:
+        return coordinates, reducer
+    return coordinates
+
+
+def transform_umap_projection(embeddings, reducer) -> np.ndarray:
+    """Project embeddings into one already-fitted UMAP space."""
+    embedding_array = _to_embedding_array(embeddings)
+    return reducer.transform(embedding_array)
 
 
 def build_umap_dataframe(
