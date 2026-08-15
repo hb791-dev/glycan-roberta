@@ -44,6 +44,7 @@ SUPPORTED_MODEL_VARIANTS = (
 
 SUPPORTED_COLOR_COLUMNS = (
     "primary_subtype_label",
+    "n_glycan_vs_other",
     "n_o_category",
     "main_glycan_class",
     "broad_branching",
@@ -209,6 +210,13 @@ def infer_main_glycan_class(label_values: Sequence[str]) -> str:
     return "Other glycan"
 
 
+def infer_n_glycan_vs_other(label_values: Sequence[str]) -> str:
+    """Collapse subtype labels into one binary N-glycan-vs-other view."""
+    if infer_n_o_category(label_values) == "N-glycan":
+        return "N-glycan"
+    return "Other"
+
+
 def count_branch_openings(sequence: str) -> int:
     """Count broad branch openings in a compact glycan sequence."""
     sequence = str(sequence)
@@ -260,6 +268,7 @@ def annotate_classification_umap_metadata(
     annotated_df["primary_subtype_label"] = annotated_df[LABEL_LIST_COLUMN].map(
         lambda labels: choose_primary_subtype_label(labels, label_support_lookup)
     )
+    annotated_df["n_glycan_vs_other"] = annotated_df[LABEL_LIST_COLUMN].map(infer_n_glycan_vs_other)
     annotated_df["n_o_category"] = annotated_df[LABEL_LIST_COLUMN].map(infer_n_o_category)
     annotated_df["main_glycan_class"] = annotated_df[LABEL_LIST_COLUMN].map(infer_main_glycan_class)
     annotated_df["branch_open_count"] = annotated_df[SEQUENCE_COLUMN].map(count_branch_openings)
@@ -373,6 +382,7 @@ def build_classification_umap_output_paths(
         "category_summary_path": str(results_dir / "category_summary.csv"),
         "umap_coordinates_path": str(results_dir / "umap_coordinates.csv"),
         "primary_subtype_plot_path": str(results_dir / "umap_primary_subtype.png"),
+        "n_glycan_vs_other_plot_path": str(results_dir / "umap_n_glycan_vs_other.png"),
         "n_o_plot_path": str(results_dir / "umap_n_vs_o.png"),
         "main_class_plot_path": str(results_dir / "umap_main_glycan_class.png"),
         "branching_plot_path": str(results_dir / "umap_broad_branching.png"),
@@ -483,6 +493,10 @@ def plot_umap_by_category(
     title: str,
     top_k_categories: int | None = None,
     other_label: str = "Other",
+    category_colors: Mapping[str, str] | None = None,
+    label_accessions: Sequence[str] | None = None,
+    accession_column: str = "glycan_id",
+    label_font_size: int = 10,
     point_size: int | float = 18,
     alpha: float = 0.82,
     figure_size: tuple[int | float, int | float] = (10, 8),
@@ -507,11 +521,17 @@ def plot_umap_by_category(
         .tolist()
     )
 
-    color_map = plt.get_cmap("tab20")
-    category_colors = {
-        category_name: color_map(index % color_map.N)
-        for index, category_name in enumerate(ordered_categories)
-    }
+    if category_colors is None:
+        color_map = plt.get_cmap("tab20")
+        resolved_category_colors = {
+            category_name: color_map(index % color_map.N)
+            for index, category_name in enumerate(ordered_categories)
+        }
+    else:
+        resolved_category_colors = {
+            category_name: category_colors.get(category_name, "#6c757d")
+            for category_name in ordered_categories
+        }
 
     plt.figure(figsize=figure_size)
     for category_name in ordered_categories:
@@ -522,9 +542,45 @@ def plot_umap_by_category(
             s=point_size,
             alpha=alpha,
             label=category_name,
-            color=category_colors[category_name],
+            color=resolved_category_colors[category_name],
             edgecolors="none",
         )
+
+    requested_accessions = [str(accession).strip() for accession in (label_accessions or []) if str(accession).strip()]
+    if requested_accessions:
+        _require_columns(plot_df, [accession_column], "umap_df")
+        labeled_points_df = plot_df.loc[
+            plot_df[accession_column].map(lambda value: str(value).strip()).isin(requested_accessions)
+        ].copy()
+
+        if not labeled_points_df.empty:
+            plt.scatter(
+                labeled_points_df["umap_1"],
+                labeled_points_df["umap_2"],
+                s=max(float(point_size) * 4.5, 85.0),
+                facecolors="none",
+                edgecolors="black",
+                linewidths=1.2,
+                zorder=5,
+            )
+            for row in labeled_points_df.itertuples(index=False):
+                accession_value = str(getattr(row, accession_column))
+                plt.annotate(
+                    accession_value,
+                    (float(row.umap_1), float(row.umap_2)),
+                    xytext=(7, 7),
+                    textcoords="offset points",
+                    fontsize=label_font_size,
+                    fontweight="bold",
+                    color="black",
+                    bbox={
+                        "boxstyle": "round,pad=0.2",
+                        "facecolor": "white",
+                        "edgecolor": "black",
+                        "alpha": 0.9,
+                    },
+                    zorder=6,
+                )
 
     plt.title(title)
     plt.xlabel("UMAP 1")
