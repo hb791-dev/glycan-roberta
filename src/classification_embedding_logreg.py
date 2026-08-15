@@ -146,6 +146,10 @@ MODEL_VARIANT_LABELS = {
 }
 STANDARD_PROBE_SPLITS = ("train", "val", "test")
 DEFAULT_HIGHLIGHT_POINT_COLORS = ("#c0392b", "#1f78b4", "#2f9e44", "#8e44ad")
+DEFAULT_BINARY_UMAP_CATEGORY_COLORS = {
+    "Other": "#ef7b52",
+    "N-glycan": "#1f5a91",
+}
 
 
 def load_run_registry(registry_csv_path: str | Path) -> pd.DataFrame:
@@ -348,6 +352,121 @@ def build_classifier_run_label_resolution_table(
             }
         )
     return pd.DataFrame(table_rows)
+
+
+def _resolve_embedding_model_parent_dir(
+    *,
+    checkpoints_dir: str | Path,
+    tokenizer_family: str,
+    experiment_name: str,
+    model_variant: str,
+    classifier_mlm_run_label: str,
+    classifier_random_run_label: str,
+) -> Path:
+    """Return the parent folder that contains one lineage's saved model subdirs."""
+    reference_model_dir = resolve_embedding_model_dir(
+        checkpoints_dir=checkpoints_dir,
+        tokenizer_family=tokenizer_family,
+        experiment_name=experiment_name,
+        model_variant=model_variant,
+        classifier_mlm_run_label=classifier_mlm_run_label,
+        classifier_random_run_label=classifier_random_run_label,
+        model_subdir="best_model",
+    )
+    return reference_model_dir.parent
+
+
+def _checkpoint_sort_key(model_subdir_name: str) -> tuple[int, int | str]:
+    """Sort checkpoint folders by step count while keeping other names stable."""
+    normalized_name = str(model_subdir_name).strip()
+    if normalized_name == "best_model":
+        return (2, normalized_name)
+
+    checkpoint_match = re.fullmatch(r"checkpoint-(\d+)", normalized_name)
+    if checkpoint_match is not None:
+        return (0, int(checkpoint_match.group(1)))
+
+    return (1, normalized_name)
+
+
+def list_available_snapshot_model_subdirs(
+    *,
+    checkpoints_dir: str | Path,
+    tokenizer_family: str,
+    experiment_name: str,
+    snapshot_model_variant: str = "pretrained_mlm",
+    classifier_mlm_run_label: str = "cls_lr2e-5_ep10_bs16_mlm",
+    classifier_random_run_label: str = "cls_lr2e-5_ep10_bs16_randominit",
+) -> list[str]:
+    """List saved checkpoint-style model folders for one model lineage."""
+    parent_dir = _resolve_embedding_model_parent_dir(
+        checkpoints_dir=checkpoints_dir,
+        tokenizer_family=tokenizer_family,
+        experiment_name=experiment_name,
+        model_variant=snapshot_model_variant,
+        classifier_mlm_run_label=classifier_mlm_run_label,
+        classifier_random_run_label=classifier_random_run_label,
+    )
+    if not parent_dir.exists():
+        return []
+
+    candidate_names = [
+        one_path.name
+        for one_path in parent_dir.iterdir()
+        if one_path.is_dir() and (one_path.name == "best_model" or one_path.name.startswith("checkpoint-"))
+    ]
+    return sorted(candidate_names, key=_checkpoint_sort_key)
+
+
+def select_snapshot_model_subdirs(
+    available_snapshot_model_subdirs: Sequence[str],
+    *,
+    max_checkpoint_snapshots: int = 4,
+    include_best_model: bool = True,
+) -> tuple[str, ...]:
+    """Choose a small, ordered checkpoint progression from available folders.
+
+    The selection keeps the earliest checkpoint, the latest checkpoint, and a
+    few evenly spaced intermediate checkpoints. ``best_model`` is appended at
+    the end when requested and available so notebook 14 can compare the saved
+    early-to-late training trajectory against the separately chosen best model.
+    """
+    checkpoint_subdirs = sorted(
+        [
+            str(model_subdir_name).strip()
+            for model_subdir_name in available_snapshot_model_subdirs
+            if str(model_subdir_name).strip().startswith("checkpoint-")
+        ],
+        key=_checkpoint_sort_key,
+    )
+    has_best_model = any(str(model_subdir_name).strip() == "best_model" for model_subdir_name in available_snapshot_model_subdirs)
+
+    if max_checkpoint_snapshots < 1:
+        raise ValueError("max_checkpoint_snapshots must be at least 1.")
+
+    if len(checkpoint_subdirs) <= max_checkpoint_snapshots:
+        selected_subdirs = checkpoint_subdirs[:]
+    else:
+        chosen_indices = np.linspace(
+            0,
+            len(checkpoint_subdirs) - 1,
+            num=max_checkpoint_snapshots,
+        )
+        selected_subdirs = []
+        for raw_index in chosen_indices:
+            checkpoint_name = checkpoint_subdirs[int(round(float(raw_index)))]
+            if checkpoint_name not in selected_subdirs:
+                selected_subdirs.append(checkpoint_name)
+
+        if checkpoint_subdirs[0] not in selected_subdirs:
+            selected_subdirs.insert(0, checkpoint_subdirs[0])
+        if checkpoint_subdirs[-1] not in selected_subdirs:
+            selected_subdirs.append(checkpoint_subdirs[-1])
+
+    if include_best_model and has_best_model and "best_model" not in selected_subdirs:
+        selected_subdirs.append("best_model")
+
+    return tuple(selected_subdirs)
 
 
 def _filter_registry_runs(
@@ -2215,6 +2334,11 @@ def _plot_snapshot_umap_grid(
     color_column: str,
     highlight_accessions: Sequence[str] | None = None,
     title: str = "Shared UMAP across snapshots",
+    category_colors: Mapping[str, str] | None = None,
+    legend_title: str | None = None,
+    point_size: int | float = 18,
+    point_alpha: float = 0.82,
+    num_columns: int = 2,
 ) -> Path | None:
     """Render one grid of shared-UMAP panels with highlighted accessions."""
     if snapshot_umap_df.empty:
@@ -2231,7 +2355,7 @@ def _plot_snapshot_umap_grid(
         .sort_values("snapshot_order", kind="stable")
     )
     num_panels = len(ordered_snapshots)
-    num_columns = min(2, num_panels)
+    num_columns = min(max(1, int(num_columns)), num_panels)
     num_rows = int(np.ceil(num_panels / max(1, num_columns)))
     fig, axes = plt.subplots(
         num_rows,
@@ -2245,15 +2369,32 @@ def _plot_snapshot_umap_grid(
 
     category_values = snapshot_umap_df[color_column].fillna("missing").map(str)
     ordered_categories = category_values.value_counts().index.tolist()
-    category_color_map = plt.get_cmap("tab10")
-    category_colors = {
-        category_name: category_color_map(index % category_color_map.N)
-        for index, category_name in enumerate(ordered_categories)
-    }
-    highlight_colors = {
-        accession: DEFAULT_HIGHLIGHT_POINT_COLORS[index % len(DEFAULT_HIGHLIGHT_POINT_COLORS)]
-        for index, accession in enumerate(ordered_accessions)
-    }
+    if {"Other", "N-glycan"}.issubset(set(ordered_categories)):
+        ordered_categories = [
+            category_name
+            for category_name in ("Other", "N-glycan")
+            if category_name in ordered_categories
+        ] + [
+            category_name
+            for category_name in ordered_categories
+            if category_name not in {"Other", "N-glycan"}
+        ]
+    if category_colors is None and {"Other", "N-glycan"}.issubset(set(ordered_categories)):
+        resolved_category_colors = {
+            category_name: DEFAULT_BINARY_UMAP_CATEGORY_COLORS.get(category_name, "#6b7280")
+            for category_name in ordered_categories
+        }
+    elif category_colors is None:
+        category_color_map = plt.get_cmap("tab10")
+        resolved_category_colors = {
+            category_name: category_color_map(index % category_color_map.N)
+            for index, category_name in enumerate(ordered_categories)
+        }
+    else:
+        resolved_category_colors = {
+            category_name: category_colors.get(category_name, "#6b7280")
+            for category_name in ordered_categories
+        }
 
     for axis, row in zip(axes_flat, ordered_snapshots.itertuples(index=False)):
         panel_df = snapshot_umap_df.loc[snapshot_umap_df["snapshot_order"].eq(int(row.snapshot_order))].copy()
@@ -2265,9 +2406,9 @@ def _plot_snapshot_umap_grid(
             axis.scatter(
                 category_df["umap_1"],
                 category_df["umap_2"],
-                s=14,
-                alpha=0.58,
-                color=category_colors[category_name],
+                s=float(point_size),
+                alpha=float(point_alpha),
+                color=resolved_category_colors[category_name],
                 edgecolors="none",
                 label=category_name,
             )
@@ -2278,20 +2419,27 @@ def _plot_snapshot_umap_grid(
             axis.scatter(
                 [float(highlight_row.umap_1)],
                 [float(highlight_row.umap_2)],
-                s=95,
-                color=highlight_colors.get(accession, "#111827"),
-                edgecolors="white",
-                linewidths=1.0,
-                zorder=4,
-            )
-            axis.text(
-                float(highlight_row.umap_1) + 0.15,
-                float(highlight_row.umap_2) + 0.15,
-                accession,
-                fontsize=9,
-                color=highlight_colors.get(accession, "#111827"),
-                weight="bold",
+                s=max(float(point_size) * 4.5, 85.0),
+                facecolors="none",
+                edgecolors="black",
+                linewidths=1.2,
                 zorder=5,
+            )
+            axis.annotate(
+                accession,
+                (float(highlight_row.umap_1), float(highlight_row.umap_2)),
+                xytext=(7, 7),
+                textcoords="offset points",
+                fontsize=10,
+                fontweight="bold",
+                color="black",
+                bbox={
+                    "boxstyle": "round,pad=0.2",
+                    "facecolor": "white",
+                    "edgecolor": "black",
+                    "alpha": 0.9,
+                },
+                zorder=6,
             )
 
         duplicate_source_label = ""
@@ -2316,13 +2464,27 @@ def _plot_snapshot_umap_grid(
 
     if ordered_categories:
         handles = [
-            Line2D([0], [0], marker="o", linestyle="", markersize=8, markerfacecolor=category_colors[name], label=name)
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                markersize=8,
+                markerfacecolor=resolved_category_colors[name],
+                label=name,
+            )
             for name in ordered_categories
         ]
-        fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.02), ncol=min(4, len(handles)), frameon=False)
+        fig.legend(
+            handles=handles,
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            title=legend_title or color_column,
+        )
 
     fig.suptitle(title, fontsize=16)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.tight_layout(rect=(0, 0, 0.88, 0.97))
     fig.savefig(output_path, dpi=250, bbox_inches="tight")
     plt.close(fig)
     return output_path
@@ -2476,6 +2638,11 @@ def build_snapshot_progression_artifacts(
     umap_metric: str = "cosine",
     umap_random_state: int = 42,
     umap_color_column: str = "main_glycan_class",
+    umap_category_colors: Mapping[str, str] | None = None,
+    umap_legend_title: str | None = None,
+    umap_point_size: int | float = 18,
+    umap_point_alpha: float = 0.82,
+    umap_num_columns: int = 2,
 ) -> dict[str, Any]:
     """Build the snapshot-progression plots and tables for notebook 14."""
     normalized_highlight_accessions = _normalize_highlight_accessions(highlight_accessions)
@@ -2530,6 +2697,11 @@ def build_snapshot_progression_artifacts(
         color_column=umap_color_column,
         highlight_accessions=found_highlight_accessions,
         title=f"Shared UMAP across compared {comparison_title_plural}",
+        category_colors=umap_category_colors,
+        legend_title=umap_legend_title,
+        point_size=umap_point_size,
+        point_alpha=umap_point_alpha,
+        num_columns=umap_num_columns,
     )
 
     highlight_positions_df = _build_highlight_accession_positions_table(
@@ -3407,6 +3579,11 @@ def run_embedding_logreg_suite(
     umap_metric: str = "cosine",
     umap_random_state: int = 42,
     umap_color_column: str = "main_glycan_class",
+    umap_category_colors: Mapping[str, str] | None = None,
+    umap_legend_title: str | None = None,
+    umap_point_size: int | float = 18,
+    umap_point_alpha: float = 0.82,
+    umap_num_columns: int = 2,
 ) -> dict[str, Any]:
     """Run the notebook-14 embedding comparison end to end."""
     normalized_pooling_strategy = normalize_pooling_strategy(pooling_strategy)
@@ -3675,6 +3852,11 @@ def run_embedding_logreg_suite(
             umap_metric=umap_metric,
             umap_random_state=umap_random_state,
             umap_color_column=umap_color_column,
+            umap_category_colors=umap_category_colors,
+            umap_legend_title=umap_legend_title,
+            umap_point_size=umap_point_size,
+            umap_point_alpha=umap_point_alpha,
+            umap_num_columns=umap_num_columns,
         )
 
     html_report_path = render_embedding_logreg_html_report(
