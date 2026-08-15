@@ -29,6 +29,7 @@ from src.run_index import upsert_run_record
 
 NOTEBOOK_PATH = "notebooks/04_roberta_pretraining.ipynb"
 VALID_RUN_MODES = {"fresh", "resume_checkpoint", "continue_best_model"}
+VALID_INTERVAL_STRATEGIES = {"epoch", "steps"}
 
 
 class GlycanMLMDataset(Dataset):
@@ -164,6 +165,101 @@ def _resolve_training_schedule(
         }
 
     raise ValueError(f"Unsupported run mode: {run_mode}")
+
+
+def _normalize_interval_strategy(value: str, field_name: str) -> str:
+    """Validate one Hugging Face interval strategy value."""
+
+    normalized_value = str(value).strip().lower()
+    if normalized_value not in VALID_INTERVAL_STRATEGIES:
+        supported_values = ", ".join(sorted(VALID_INTERVAL_STRATEGIES))
+        raise ValueError(f"{field_name} must be one of: {supported_values}")
+    return normalized_value
+
+
+def _normalize_positive_int(value: int | None, field_name: str) -> int | None:
+    """Validate one optional positive integer notebook setting."""
+
+    if value is None:
+        return None
+
+    normalized_value = int(value)
+    if normalized_value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer.")
+    return normalized_value
+
+
+def _resolve_checkpoint_schedule(
+    checkpoint_save_strategy: str,
+    checkpoint_save_steps: int | None,
+    evaluation_strategy: str | None,
+    evaluation_steps: int | None,
+    load_best_model_at_end: bool,
+) -> dict[str, object]:
+    """Resolve one validated checkpoint and evaluation schedule."""
+
+    resolved_save_strategy = _normalize_interval_strategy(
+        checkpoint_save_strategy,
+        "CHECKPOINT_SAVE_STRATEGY",
+    )
+    resolved_evaluation_strategy = (
+        resolved_save_strategy
+        if evaluation_strategy is None
+        else _normalize_interval_strategy(
+            evaluation_strategy,
+            "EVALUATION_STRATEGY",
+        )
+    )
+
+    resolved_save_steps = None
+    if resolved_save_strategy == "steps":
+        resolved_save_steps = _normalize_positive_int(
+            checkpoint_save_steps,
+            "CHECKPOINT_SAVE_STEPS",
+        )
+        if resolved_save_steps is None:
+            raise ValueError(
+                "CHECKPOINT_SAVE_STEPS is required when CHECKPOINT_SAVE_STRATEGY='steps'."
+            )
+
+    resolved_evaluation_steps = None
+    if resolved_evaluation_strategy == "steps":
+        if evaluation_steps is None and resolved_save_strategy == "steps":
+            resolved_evaluation_steps = resolved_save_steps
+        else:
+            resolved_evaluation_steps = _normalize_positive_int(
+                evaluation_steps,
+                "EVALUATION_STEPS",
+            )
+
+        if resolved_evaluation_steps is None:
+            raise ValueError(
+                "EVALUATION_STEPS is required when EVALUATION_STRATEGY='steps'."
+            )
+
+    if load_best_model_at_end and resolved_save_strategy != resolved_evaluation_strategy:
+        raise ValueError(
+            "load_best_model_at_end=True requires CHECKPOINT_SAVE_STRATEGY and "
+            "EVALUATION_STRATEGY to match."
+        )
+
+    if (
+        load_best_model_at_end
+        and resolved_save_strategy == "steps"
+        and resolved_save_steps % resolved_evaluation_steps != 0
+    ):
+        raise ValueError(
+            "When step-based saving is used with load_best_model_at_end=True, "
+            "CHECKPOINT_SAVE_STEPS must be a multiple of EVALUATION_STEPS."
+        )
+
+    return {
+        "checkpoint_save_strategy": resolved_save_strategy,
+        "checkpoint_save_steps": resolved_save_steps,
+        "evaluation_strategy": resolved_evaluation_strategy,
+        "evaluation_steps": resolved_evaluation_steps,
+        "load_best_model_at_end": bool(load_best_model_at_end),
+    }
 
 
 def _validate_resume_source(run_mode: str, resume_source_dir: str | Path) -> Path:
@@ -384,6 +480,11 @@ def _build_pretraining_run_record(
         "weight_decay": settings["weight_decay"],
         "epochs": settings["epochs"],
         "early_stopping_patience": settings["early_stopping_patience"],
+        "checkpoint_save_strategy": settings["checkpoint_save_strategy"],
+        "checkpoint_save_steps": settings["checkpoint_save_steps"],
+        "evaluation_strategy": settings["evaluation_strategy"],
+        "evaluation_steps": settings["evaluation_steps"],
+        "save_total_limit": settings["save_total_limit"],
         "tokenizer_dir": str(paths["tokenizer_dir"]),
         "tokenized_dataset_dir": str(paths["tokenized_dataset_dir"]),
         "checkpoint_dir": str(paths["checkpoint_dir"]),
@@ -431,6 +532,10 @@ def prepare_pretraining_run(
     max_position_embeddings: int,
     batch_size: int,
     weight_decay: float,
+    checkpoint_save_strategy: str,
+    checkpoint_save_steps: int | None,
+    evaluation_strategy: str | None,
+    evaluation_steps: int | None,
     save_total_limit: int,
     early_stopping_patience: int,
     logging_steps: int,
@@ -460,6 +565,13 @@ def prepare_pretraining_run(
         continuation_epochs=continuation_epochs,
         base_learning_rate=base_learning_rate,
         continuation_learning_rate=continuation_learning_rate,
+    )
+    checkpoint_schedule = _resolve_checkpoint_schedule(
+        checkpoint_save_strategy=checkpoint_save_strategy,
+        checkpoint_save_steps=checkpoint_save_steps,
+        evaluation_strategy=evaluation_strategy,
+        evaluation_steps=evaluation_steps,
+        load_best_model_at_end=True,
     )
 
     normalized_resume_source = None
@@ -554,7 +666,12 @@ def prepare_pretraining_run(
         "weight_decay": float(weight_decay),
         "epochs": int(training_schedule["epochs"]),
         "early_stopping_patience": int(early_stopping_patience),
+        "checkpoint_save_strategy": checkpoint_schedule["checkpoint_save_strategy"],
+        "checkpoint_save_steps": checkpoint_schedule["checkpoint_save_steps"],
+        "evaluation_strategy": checkpoint_schedule["evaluation_strategy"],
+        "evaluation_steps": checkpoint_schedule["evaluation_steps"],
         "save_total_limit": int(save_total_limit),
+        "load_best_model_at_end": checkpoint_schedule["load_best_model_at_end"],
         "logging_steps": int(logging_steps),
         "random_seed": int(resolved_random_seed),
         "initial_epochs": int(initial_epochs),
@@ -731,6 +848,10 @@ def build_training_components(
     batch_size: int,
     epochs: int,
     weight_decay: float,
+    checkpoint_save_strategy: str,
+    checkpoint_save_steps: int | None,
+    evaluation_strategy: str,
+    evaluation_steps: int | None,
     save_total_limit: int,
     logging_steps: int,
     random_seed: int,
@@ -744,26 +865,32 @@ def build_training_components(
     )
     fp16_enabled = bool(torch.cuda.is_available())
 
-    training_args = TrainingArguments(
-        output_dir=str(checkpoint_dir),
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        learning_rate=float(learning_rate),
-        per_device_train_batch_size=int(batch_size),
-        per_device_eval_batch_size=int(batch_size),
-        num_train_epochs=int(epochs),
-        weight_decay=float(weight_decay),
-        save_total_limit=int(save_total_limit),
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        logging_steps=int(logging_steps),
-        disable_tqdm=True,
-        report_to="none",
-        seed=int(random_seed),
-        data_seed=int(random_seed),
-        fp16=fp16_enabled,
-    )
+    training_argument_kwargs = {
+        "output_dir": str(checkpoint_dir),
+        "eval_strategy": str(evaluation_strategy),
+        "save_strategy": str(checkpoint_save_strategy),
+        "learning_rate": float(learning_rate),
+        "per_device_train_batch_size": int(batch_size),
+        "per_device_eval_batch_size": int(batch_size),
+        "num_train_epochs": int(epochs),
+        "weight_decay": float(weight_decay),
+        "save_total_limit": int(save_total_limit),
+        "load_best_model_at_end": True,
+        "metric_for_best_model": "eval_loss",
+        "greater_is_better": False,
+        "logging_steps": int(logging_steps),
+        "disable_tqdm": True,
+        "report_to": "none",
+        "seed": int(random_seed),
+        "data_seed": int(random_seed),
+        "fp16": fp16_enabled,
+    }
+    if checkpoint_save_strategy == "steps":
+        training_argument_kwargs["save_steps"] = int(checkpoint_save_steps)
+    if evaluation_strategy == "steps":
+        training_argument_kwargs["eval_steps"] = int(evaluation_steps)
+
+    training_args = TrainingArguments(**training_argument_kwargs)
 
     return {
         "data_collator": data_collator,
