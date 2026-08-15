@@ -503,6 +503,7 @@ def _build_one_registry_run_spec(
     model_variant: str,
     classifier_mlm_run_label: str,
     classifier_random_run_label: str,
+    resolved_experiment_name: str | None = None,
 ) -> dict[str, Any]:
     """Convert one registry row plus one model state into a run-spec record."""
     architecture_label = build_architecture_label(
@@ -511,9 +512,10 @@ def _build_one_registry_run_spec(
         row.attention_heads,
     )
     variant_label = MODEL_VARIANT_LABELS[model_variant]
+    experiment_name = str(resolved_experiment_name or row.experiment_name).strip()
     return {
         "tokenizer_family": str(row.tokenizer_family),
-        "experiment_name": str(row.experiment_name),
+        "experiment_name": experiment_name,
         "model_variant": str(model_variant),
         "architecture_label": architecture_label,
         "display_label": f"{row.tokenizer_family} | {architecture_label} | {variant_label}",
@@ -533,6 +535,7 @@ def build_registry_run_specs(
     *,
     tokenizer_families: Sequence[str] | None = None,
     experiment_names: Sequence[str] | None = None,
+    resolved_experiment_name: str | None = None,
     model_variants: Sequence[str] = SUPPORTED_MODEL_VARIANTS,
     classifier_mlm_run_label: str = "cls_lr2e-5_ep10_bs16_mlm",
     classifier_random_run_label: str = "cls_lr2e-5_ep10_bs16_randominit",
@@ -581,6 +584,7 @@ def build_registry_run_specs(
                     model_variant=model_variant,
                     classifier_mlm_run_label=classifier_mlm_run_label,
                     classifier_random_run_label=classifier_random_run_label,
+                    resolved_experiment_name=resolved_experiment_name,
                 )
             )
 
@@ -622,6 +626,7 @@ def build_snapshot_run_specs(
     checkpoints_dir: str | Path,
     tokenizer_family: str,
     experiment_name: str,
+    registry_experiment_name: str | None = None,
     snapshot_model_variant: str = "pretrained_mlm",
     snapshot_model_subdirs: Sequence[str] = ("best_model",),
     classifier_mlm_run_label: str = "cls_lr2e-5_ep10_bs16_mlm",
@@ -648,7 +653,7 @@ def build_snapshot_run_specs(
     row = resolve_single_registry_run(
         registry_df,
         tokenizer_family=tokenizer_family,
-        experiment_name=experiment_name,
+        experiment_name=str(registry_experiment_name or experiment_name),
         only_fresh_runs=only_fresh_runs,
         only_tested_runs=only_tested_runs,
     )
@@ -657,6 +662,7 @@ def build_snapshot_run_specs(
         model_variant=normalized_variant,
         classifier_mlm_run_label=classifier_mlm_run_label,
         classifier_random_run_label=classifier_random_run_label,
+        resolved_experiment_name=experiment_name,
     )
 
     snapshot_run_specs: list[dict[str, Any]] = []
@@ -712,6 +718,7 @@ def build_layer_run_specs(
     checkpoints_dir: str | Path,
     tokenizer_family: str,
     experiment_name: str,
+    registry_experiment_name: str | None = None,
     model_variant: str = "pretrained_mlm",
     model_subdir: str = "best_model",
     embedding_layer_indices: Sequence[int] = (0, -1),
@@ -740,7 +747,7 @@ def build_layer_run_specs(
     row = resolve_single_registry_run(
         registry_df,
         tokenizer_family=tokenizer_family,
-        experiment_name=experiment_name,
+        experiment_name=str(registry_experiment_name or experiment_name),
         only_fresh_runs=only_fresh_runs,
         only_tested_runs=only_tested_runs,
     )
@@ -749,6 +756,7 @@ def build_layer_run_specs(
         model_variant=normalized_variant,
         classifier_mlm_run_label=classifier_mlm_run_label,
         classifier_random_run_label=classifier_random_run_label,
+        resolved_experiment_name=experiment_name,
     )
     model_dir = resolve_embedding_model_dir(
         checkpoints_dir=checkpoints_dir,
