@@ -600,13 +600,13 @@ def plot_top1_correctness_pr_curves(
     save_path=None,
     recall_grid_points: int = 201,
 ):
-    """Plot macro and support-weighted PR curves for top-1 correctness.
+    """Plot the support-weighted PR curve for top-1 correctness.
 
     Each true token class is evaluated separately. Within a class, a masked
     position is treated as a positive example when the model's top-1 prediction
     is correct and as a negative example otherwise. The score is the top-1
     prediction confidence. Per-class curves are converted to a monotonic
-    precision envelope before macro and support-weighted aggregation.
+    precision envelope before aggregation onto a single weighted curve.
     """
     top1_frame = build_top1_correctness_frame(y_true, y_pred, y_probs, tokenizer)
     class_ids = np.unique(y_true)
@@ -651,7 +651,6 @@ def plot_top1_correctness_pr_curves(
     class_supports = np.asarray(class_supports, dtype=float)
     per_class_summary = pd.DataFrame(per_class_rows).sort_values("support", ascending=False)
 
-    macro_precision = class_precision_matrix.mean(axis=0)
     weighted_precision = np.average(class_precision_matrix, axis=0, weights=class_supports)
     macro_average_precision = float(per_class_summary["average_precision"].mean())
     weighted_average_precision = float(
@@ -659,12 +658,6 @@ def plot_top1_correctness_pr_curves(
     )
 
     plt.figure(figsize=(8, 6))
-    plt.plot(
-        recall_grid,
-        macro_precision,
-        label="Macro",
-        linewidth=2,
-    )
     plt.plot(
         recall_grid,
         weighted_precision,
