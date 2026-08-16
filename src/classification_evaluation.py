@@ -582,6 +582,100 @@ def plot_exact_match_monotonic_pr_curve(
     plt.close()
 
 
+def load_exact_match_review_table(
+    prediction_table_path: str | Path,
+) -> "pd.DataFrame":
+    """Load the saved notebook-11 prediction table needed for exact-match review."""
+    prediction_table_path = require_existing_path(
+        prediction_table_path,
+        "Saved notebook-11 test prediction table",
+    )
+    prediction_table_df = pd.read_csv(prediction_table_path)
+
+    required_columns = {"is_exact_match", "exact_match_confidence"}
+    missing_columns = required_columns.difference(prediction_table_df.columns)
+    if missing_columns:
+        missing_list = ", ".join(sorted(missing_columns))
+        raise ValueError(
+            "Saved notebook-11 prediction table is missing required exact-match "
+            f"review columns: {missing_list}."
+        )
+
+    return prediction_table_df
+
+
+def plot_exact_match_monotonic_pr_curve_comparison(
+    primary_exact_match_flags,
+    primary_exact_match_confidence_scores,
+    comparison_exact_match_flags,
+    comparison_exact_match_confidence_scores,
+    primary_label: str,
+    comparison_label: str,
+    save_path: str | Path | None = None,
+) -> "pd.DataFrame":
+    """Plot an overlaid exact-match monotonic PR comparison for two runs."""
+    primary_binary_true = np.asarray(primary_exact_match_flags, dtype=int)
+    primary_confidence_scores = np.asarray(primary_exact_match_confidence_scores, dtype=float)
+    comparison_binary_true = np.asarray(comparison_exact_match_flags, dtype=int)
+    comparison_confidence_scores = np.asarray(comparison_exact_match_confidence_scores, dtype=float)
+
+    primary_recall, primary_precision, primary_average_precision = _build_monotonic_pr_curve(
+        primary_binary_true,
+        primary_confidence_scores,
+    )
+    comparison_recall, comparison_precision, comparison_average_precision = _build_monotonic_pr_curve(
+        comparison_binary_true,
+        comparison_confidence_scores,
+    )
+
+    plt.figure(figsize=(7, 5))
+    plt.plot(
+        primary_recall,
+        primary_precision,
+        label=f"{primary_label} (AP={primary_average_precision:.3f})",
+        linewidth=2,
+    )
+    plt.plot(
+        comparison_recall,
+        comparison_precision,
+        label=f"{comparison_label} (AP={comparison_average_precision:.3f})",
+        linewidth=2,
+    )
+    plt.xlabel("Recall")
+    plt.ylabel("Interpolated precision")
+    plt.title("Exact-match monotonic PR comparison")
+    plt.legend(loc="lower left")
+    plt.grid(alpha=0.3)
+
+    if save_path is not None:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+    return pd.DataFrame(
+        [
+            {
+                "curve_label": str(primary_label),
+                "average_precision": float(primary_average_precision),
+                "num_glycans": int(len(primary_binary_true)),
+                "num_exact_matches": int(primary_binary_true.sum()),
+                "exact_match_accuracy": float(primary_binary_true.mean())
+                if len(primary_binary_true)
+                else float("nan"),
+            },
+            {
+                "curve_label": str(comparison_label),
+                "average_precision": float(comparison_average_precision),
+                "num_glycans": int(len(comparison_binary_true)),
+                "num_exact_matches": int(comparison_binary_true.sum()),
+                "exact_match_accuracy": float(comparison_binary_true.mean())
+                if len(comparison_binary_true)
+                else float("nan"),
+            },
+        ]
+    )
+
+
 def build_classification_evaluation_output_paths(
     project_root: str | Path,
     tokenizer_family: str,
