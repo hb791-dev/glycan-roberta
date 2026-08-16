@@ -17,8 +17,10 @@ import torch
 from torch.utils.data import Dataset
 from transformers import (
     DataCollatorForLanguageModeling,
+    EarlyStoppingCallback,
     RobertaConfig,
     RobertaForMaskedLM,
+    TrainerCallback,
     TrainingArguments,
 )
 
@@ -194,6 +196,8 @@ def _resolve_checkpoint_schedule(
     checkpoint_save_steps: int | None,
     evaluation_strategy: str | None,
     evaluation_steps: int | None,
+    early_checkpoint_save_end_step: int | None,
+    early_checkpoint_save_interval: int | None,
     load_best_model_at_end: bool,
 ) -> dict[str, object]:
     """Resolve one validated checkpoint and evaluation schedule."""
@@ -237,6 +241,41 @@ def _resolve_checkpoint_schedule(
                 "EVALUATION_STEPS is required when EVALUATION_STRATEGY='steps'."
             )
 
+    resolved_early_checkpoint_save_end_step = _normalize_positive_int(
+        early_checkpoint_save_end_step,
+        "EARLY_CHECKPOINT_SAVE_END_STEP",
+    )
+    resolved_early_checkpoint_save_interval = _normalize_positive_int(
+        early_checkpoint_save_interval,
+        "EARLY_CHECKPOINT_SAVE_INTERVAL",
+    )
+
+    if resolved_early_checkpoint_save_end_step is not None:
+        if resolved_save_strategy != "steps":
+            raise ValueError(
+                "EARLY_CHECKPOINT_SAVE_END_STEP requires "
+                "CHECKPOINT_SAVE_STRATEGY='steps'."
+            )
+        if resolved_early_checkpoint_save_interval is None:
+            raise ValueError(
+                "EARLY_CHECKPOINT_SAVE_INTERVAL is required when "
+                "EARLY_CHECKPOINT_SAVE_END_STEP is set."
+            )
+        if (
+            resolved_early_checkpoint_save_end_step
+            >= resolved_save_steps
+        ):
+            raise ValueError(
+                "EARLY_CHECKPOINT_SAVE_END_STEP must be smaller than "
+                "CHECKPOINT_SAVE_STEPS so the early-step burst stays distinct "
+                "from the regular save cadence."
+            )
+    elif resolved_early_checkpoint_save_interval is not None:
+        raise ValueError(
+            "EARLY_CHECKPOINT_SAVE_INTERVAL requires "
+            "EARLY_CHECKPOINT_SAVE_END_STEP to be set."
+        )
+
     if load_best_model_at_end and resolved_save_strategy != resolved_evaluation_strategy:
         raise ValueError(
             "load_best_model_at_end=True requires CHECKPOINT_SAVE_STRATEGY and "
@@ -258,6 +297,8 @@ def _resolve_checkpoint_schedule(
         "checkpoint_save_steps": resolved_save_steps,
         "evaluation_strategy": resolved_evaluation_strategy,
         "evaluation_steps": resolved_evaluation_steps,
+        "early_checkpoint_save_end_step": resolved_early_checkpoint_save_end_step,
+        "early_checkpoint_save_interval": resolved_early_checkpoint_save_interval,
         "load_best_model_at_end": bool(load_best_model_at_end),
     }
 
@@ -484,6 +525,8 @@ def _build_pretraining_run_record(
         "checkpoint_save_steps": settings["checkpoint_save_steps"],
         "evaluation_strategy": settings["evaluation_strategy"],
         "evaluation_steps": settings["evaluation_steps"],
+        "early_checkpoint_save_end_step": settings["early_checkpoint_save_end_step"],
+        "early_checkpoint_save_interval": settings["early_checkpoint_save_interval"],
         "save_total_limit": settings["save_total_limit"],
         "tokenizer_dir": str(paths["tokenizer_dir"]),
         "tokenized_dataset_dir": str(paths["tokenized_dataset_dir"]),
@@ -536,6 +579,8 @@ def prepare_pretraining_run(
     checkpoint_save_steps: int | None,
     evaluation_strategy: str | None,
     evaluation_steps: int | None,
+    early_checkpoint_save_end_step: int | None,
+    early_checkpoint_save_interval: int | None,
     save_total_limit: int,
     early_stopping_patience: int,
     logging_steps: int,
@@ -571,6 +616,8 @@ def prepare_pretraining_run(
         checkpoint_save_steps=checkpoint_save_steps,
         evaluation_strategy=evaluation_strategy,
         evaluation_steps=evaluation_steps,
+        early_checkpoint_save_end_step=early_checkpoint_save_end_step,
+        early_checkpoint_save_interval=early_checkpoint_save_interval,
         load_best_model_at_end=True,
     )
 
@@ -670,6 +717,12 @@ def prepare_pretraining_run(
         "checkpoint_save_steps": checkpoint_schedule["checkpoint_save_steps"],
         "evaluation_strategy": checkpoint_schedule["evaluation_strategy"],
         "evaluation_steps": checkpoint_schedule["evaluation_steps"],
+        "early_checkpoint_save_end_step": checkpoint_schedule[
+            "early_checkpoint_save_end_step"
+        ],
+        "early_checkpoint_save_interval": checkpoint_schedule[
+            "early_checkpoint_save_interval"
+        ],
         "save_total_limit": int(save_total_limit),
         "load_best_model_at_end": checkpoint_schedule["load_best_model_at_end"],
         "logging_steps": int(logging_steps),
@@ -852,7 +905,10 @@ def build_training_components(
     checkpoint_save_steps: int | None,
     evaluation_strategy: str,
     evaluation_steps: int | None,
+    early_checkpoint_save_end_step: int | None,
+    early_checkpoint_save_interval: int | None,
     save_total_limit: int,
+    early_stopping_patience: int,
     logging_steps: int,
     random_seed: int,
 ) -> dict[str, object]:
@@ -896,7 +952,57 @@ def build_training_components(
         "data_collator": data_collator,
         "training_args": training_args,
         "fp16_enabled": fp16_enabled,
+        "trainer_callbacks": build_pretraining_trainer_callbacks(
+            early_stopping_patience=early_stopping_patience,
+            early_checkpoint_save_end_step=early_checkpoint_save_end_step,
+            early_checkpoint_save_interval=early_checkpoint_save_interval,
+        ),
     }
+
+
+class EarlyStepCheckpointCallback(TrainerCallback):
+    """Save dense early checkpoints before switching to the regular cadence."""
+
+    def __init__(
+        self,
+        end_step: int | None,
+        step_interval: int | None,
+    ) -> None:
+        self.end_step = int(end_step) if end_step is not None else None
+        self.step_interval = int(step_interval) if step_interval is not None else None
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if self.end_step is None or self.step_interval is None:
+            return control
+
+        current_step = int(state.global_step)
+        if (
+            current_step > 0
+            and current_step <= self.end_step
+            and current_step % self.step_interval == 0
+        ):
+            control.should_save = True
+        return control
+
+
+def build_pretraining_trainer_callbacks(
+    early_stopping_patience: int,
+    early_checkpoint_save_end_step: int | None,
+    early_checkpoint_save_interval: int | None,
+) -> list[TrainerCallback]:
+    """Build the trainer callbacks used by notebook 04."""
+
+    callbacks: list[TrainerCallback] = [
+        EarlyStoppingCallback(early_stopping_patience=int(early_stopping_patience)),
+    ]
+    if early_checkpoint_save_end_step is not None:
+        callbacks.append(
+            EarlyStepCheckpointCallback(
+                end_step=early_checkpoint_save_end_step,
+                step_interval=early_checkpoint_save_interval,
+            )
+        )
+    return callbacks
 
 
 def patch_transformers_tqdm_for_plain_text() -> None:
