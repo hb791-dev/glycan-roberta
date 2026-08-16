@@ -84,8 +84,10 @@ PREDICTED_PROBABILITY_COLUMN = "predicted_probability_target_class"
 PREDICTED_PROBABILITIES_JSON_COLUMN = "predicted_probabilities_json"
 DEFAULT_POSITIVE_LABEL = "N-glycan"
 DEFAULT_NEGATIVE_LABEL = "Not N-glycan (including unlabeled)"
+DEFAULT_STRUCTURAL_4CLASS_OTHER_LABEL = "Other"
 DEFAULT_BINARY_TARGET_NAME = "N-glycan vs other"
 DEFAULT_SUBCLASS_TARGET_NAME = "N-glycan subclass probe"
+DEFAULT_STRUCTURAL_4CLASS_TARGET_NAME = "Structural 4-class N-glycan probe"
 CURRENT_PROJECT_LABEL_SOURCE = "current_project_labels"
 STRUCTURAL_RULE_LABEL_SOURCE = "structural_rule_labels"
 SUPPORTED_PROBE_LABEL_SOURCES = (
@@ -96,6 +98,7 @@ DEFAULT_STRUCTURAL_CONTRADICTION_POLICY = STRUCTURAL_EXCLUDE_TRUE_CONTRADICTIONS
 SUPPORTED_PROBE_TARGET_MODES = (
     "n_glycan_binary",
     "n_glycan_subclass_multiclass",
+    "n_glycan_structural_4class",
 )
 SUBCLASS_EXCLUSION_REASON_COLUMN = "probe_exclusion_reason"
 N_GLYCAN_SUBCLASS_COLUMN = "n_glycan_subclass_label"
@@ -150,6 +153,20 @@ DEFAULT_BINARY_UMAP_CATEGORY_COLORS = {
     "Other": "#ef7b52",
     "N-glycan": "#1f5a91",
 }
+DEFAULT_SUBCLASS_UMAP_CATEGORY_COLORS = {
+    "High mannose": "#d97706",
+    "Complex": "#1f5a91",
+    "Hybrid": "#2f9e44",
+}
+DEFAULT_STRUCTURAL_4CLASS_UMAP_CATEGORY_COLORS = {
+    "Other": "#ef7b52",
+    "High mannose": "#d97706",
+    "Complex": "#1f5a91",
+    "Hybrid": "#2f9e44",
+}
+DEFAULT_BINARY_UMAP_LEGEND_TITLE = "n_glycan_vs_other"
+DEFAULT_SUBCLASS_UMAP_LEGEND_TITLE = "n_glycan_subclass"
+DEFAULT_STRUCTURAL_4CLASS_UMAP_LEGEND_TITLE = "other_vs_n_glycan_subclass"
 
 
 def load_run_registry(registry_csv_path: str | Path) -> pd.DataFrame:
@@ -911,6 +928,40 @@ def _normalize_probe_target_mode(probe_target_mode: str) -> str:
     return normalized_mode
 
 
+def resolve_probe_target_visual_defaults(probe_target_mode: str) -> dict[str, Any]:
+    """Return notebook-14 plotting and naming defaults for one probe target."""
+
+    normalized_mode = _normalize_probe_target_mode(probe_target_mode)
+    if normalized_mode == "n_glycan_binary":
+        return {
+            "umap_color_column": TARGET_LABEL_COLUMN,
+            "umap_category_colors": DEFAULT_BINARY_UMAP_CATEGORY_COLORS.copy(),
+            "umap_legend_title": DEFAULT_BINARY_UMAP_LEGEND_TITLE,
+            "comparison_run_label_prefix": "n_glycan_binary",
+            "report_target_label": "N-glycan binary",
+            "metric_plot_names": ("accuracy", "f1", "balanced_accuracy", "weighted_f1"),
+        }
+
+    if normalized_mode == "n_glycan_structural_4class":
+        return {
+            "umap_color_column": TARGET_LABEL_COLUMN,
+            "umap_category_colors": DEFAULT_STRUCTURAL_4CLASS_UMAP_CATEGORY_COLORS.copy(),
+            "umap_legend_title": DEFAULT_STRUCTURAL_4CLASS_UMAP_LEGEND_TITLE,
+            "comparison_run_label_prefix": "n_glycan_structural_4class",
+            "report_target_label": "Structural 4-class N-glycan",
+            "metric_plot_names": ("accuracy", "f1", "weighted_f1", "balanced_accuracy"),
+        }
+
+    return {
+        "umap_color_column": TARGET_LABEL_COLUMN,
+        "umap_category_colors": DEFAULT_SUBCLASS_UMAP_CATEGORY_COLORS.copy(),
+        "umap_legend_title": DEFAULT_SUBCLASS_UMAP_LEGEND_TITLE,
+        "comparison_run_label_prefix": "n_glycan_subclass_multiclass",
+        "report_target_label": "N-glycan subclass",
+        "metric_plot_names": ("accuracy", "f1", "weighted_f1", "balanced_accuracy"),
+    }
+
+
 def _normalize_subclass_categories(subclass_categories: Sequence[str] | None) -> tuple[str, ...]:
     """Return ordered, de-duplicated N-glycan subclass labels."""
     normalized_categories: list[str] = []
@@ -1012,7 +1063,7 @@ def _build_probe_edge_case_summary(
             ("n_glycan_rows", int(split_full_df["main_glycan_class"].map(str).eq("N-glycan").sum())),
         ]
 
-        if probe_target_mode == "n_glycan_subclass_multiclass":
+        if probe_target_mode in {"n_glycan_subclass_multiclass", "n_glycan_structural_4class"}:
             n_glycan_mask = split_full_df["main_glycan_class"].map(str).eq("N-glycan")
             ambiguous_mask = n_glycan_mask & split_full_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].gt(1)
             unmapped_mask = n_glycan_mask & split_full_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(0)
@@ -1026,14 +1077,26 @@ def _build_probe_edge_case_summary(
                 & split_full_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(1)
                 & split_full_df[N_GLYCAN_SUBCLASS_COLUMN].isin(supported_categories)
             )
-            metric_rows.extend(
-                [
-                    ("n_glycan_rows_with_supported_single_subclass", int(supported_single_mask.sum())),
-                    ("n_glycan_rows_with_multiple_supported_subclasses", int(ambiguous_mask.sum())),
-                    ("n_glycan_rows_with_no_supported_subclass_match", int(unmapped_mask.sum())),
-                    ("n_glycan_rows_with_rare_or_excluded_subclass", int(unsupported_mask.sum())),
-                ]
-            )
+            if probe_target_mode == "n_glycan_structural_4class":
+                kept_other_mask = split_probe_df[TARGET_LABEL_COLUMN].eq(DEFAULT_STRUCTURAL_4CLASS_OTHER_LABEL)
+                metric_rows.extend(
+                    [
+                        ("rows_kept_as_other", int(kept_other_mask.sum())),
+                        ("n_glycan_rows_kept_with_supported_single_subclass", int(supported_single_mask.sum())),
+                        ("excluded_n_glycan_rows_with_multiple_supported_subclasses", int(ambiguous_mask.sum())),
+                        ("excluded_n_glycan_rows_with_no_supported_subclass_match", int(unmapped_mask.sum())),
+                        ("excluded_n_glycan_rows_with_rare_or_excluded_subclass", int(unsupported_mask.sum())),
+                    ]
+                )
+            else:
+                metric_rows.extend(
+                    [
+                        ("n_glycan_rows_with_supported_single_subclass", int(supported_single_mask.sum())),
+                        ("n_glycan_rows_with_multiple_supported_subclasses", int(ambiguous_mask.sum())),
+                        ("n_glycan_rows_with_no_supported_subclass_match", int(unmapped_mask.sum())),
+                        ("n_glycan_rows_with_rare_or_excluded_subclass", int(unsupported_mask.sum())),
+                    ]
+                )
 
         for metric_name, metric_value in metric_rows:
             summary_rows.append(
@@ -1083,6 +1146,26 @@ def _build_probe_edge_case_detail_table(
             detail_df["n_o_category"].map(str).eq("Mixed N/O"),
             SUBCLASS_EXCLUSION_REASON_COLUMN,
         ] = "mixed_n_o_labels"
+    elif probe_target_mode == "n_glycan_structural_4class":
+        non_n_mask = ~detail_df["main_glycan_class"].map(str).eq("N-glycan")
+        ambiguous_mask = detail_df["main_glycan_class"].map(str).eq("N-glycan") & detail_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].gt(1)
+        unmapped_mask = detail_df["main_glycan_class"].map(str).eq("N-glycan") & detail_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(0)
+        unsupported_mask = (
+            detail_df["main_glycan_class"].map(str).eq("N-glycan")
+            & detail_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(1)
+            & ~detail_df[N_GLYCAN_SUBCLASS_COLUMN].isin(supported_categories)
+        )
+        detail_df.loc[
+            non_n_mask & ~detail_df["is_labeled_row"],
+            SUBCLASS_EXCLUSION_REASON_COLUMN,
+        ] = "unlabeled_row_kept_as_other"
+        detail_df.loc[
+            detail_df["n_o_category"].map(str).eq("Mixed N/O"),
+            SUBCLASS_EXCLUSION_REASON_COLUMN,
+        ] = "mixed_n_o_labels"
+        detail_df.loc[unmapped_mask, SUBCLASS_EXCLUSION_REASON_COLUMN] = "no_supported_n_glycan_subclass_match"
+        detail_df.loc[ambiguous_mask, SUBCLASS_EXCLUSION_REASON_COLUMN] = "multiple_supported_n_glycan_subclasses"
+        detail_df.loc[unsupported_mask, SUBCLASS_EXCLUSION_REASON_COLUMN] = "rare_or_excluded_n_glycan_subclass"
     else:
         non_n_mask = ~detail_df["main_glycan_class"].map(str).eq("N-glycan")
         ambiguous_mask = detail_df["main_glycan_class"].map(str).eq("N-glycan") & detail_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].gt(1)
@@ -1164,6 +1247,29 @@ def prepare_logreg_probe_dataframe(
         )
         probe_df[TARGET_KIND_COLUMN] = "binary"
         probe_target_name = DEFAULT_BINARY_TARGET_NAME
+    elif normalized_mode == "n_glycan_structural_4class":
+        non_n_mask = ~annotated_df["main_glycan_class"].map(str).eq("N-glycan")
+        supported_single_mask = (
+            annotated_df["main_glycan_class"].map(str).eq("N-glycan")
+            & annotated_df[N_GLYCAN_SUBCLASS_MATCH_COUNT_COLUMN].eq(1)
+            & annotated_df[N_GLYCAN_SUBCLASS_COLUMN].isin(normalized_subclass_categories)
+        )
+        probe_df = annotated_df.loc[non_n_mask | supported_single_mask].copy()
+        subclass_code_lookup = {
+            DEFAULT_STRUCTURAL_4CLASS_OTHER_LABEL: 0,
+            **{
+                subclass_name: subclass_index + 1
+                for subclass_index, subclass_name in enumerate(normalized_subclass_categories)
+            },
+        }
+        probe_df[TARGET_LABEL_COLUMN] = np.where(
+            probe_df["main_glycan_class"].map(str).eq("N-glycan"),
+            probe_df[N_GLYCAN_SUBCLASS_COLUMN].map(str),
+            DEFAULT_STRUCTURAL_4CLASS_OTHER_LABEL,
+        )
+        probe_df[TARGET_COLUMN] = probe_df[TARGET_LABEL_COLUMN].map(subclass_code_lookup).astype(int)
+        probe_df[TARGET_KIND_COLUMN] = "multiclass"
+        probe_target_name = DEFAULT_STRUCTURAL_4CLASS_TARGET_NAME
     else:
         probe_df = annotated_df.loc[
             annotated_df["main_glycan_class"].map(str).eq("N-glycan")
@@ -1264,11 +1370,15 @@ def load_saved_probe_dataframe_bundle(
             probe_target_name = probe_target_name_values[0]
     if not probe_target_name:
         target_kind = str(probe_df[TARGET_KIND_COLUMN].mode(dropna=True).iat[0]) if not probe_df.empty else ""
-        probe_target_name = (
-            DEFAULT_SUBCLASS_TARGET_NAME
-            if target_kind == "multiclass"
-            else DEFAULT_BINARY_TARGET_NAME
-        )
+        if target_kind == "multiclass":
+            observed_labels = set(probe_df[TARGET_LABEL_COLUMN].dropna().map(str).tolist())
+            probe_target_name = (
+                DEFAULT_STRUCTURAL_4CLASS_TARGET_NAME
+                if DEFAULT_STRUCTURAL_4CLASS_OTHER_LABEL in observed_labels
+                else DEFAULT_SUBCLASS_TARGET_NAME
+            )
+        else:
+            probe_target_name = DEFAULT_BINARY_TARGET_NAME
 
     subclass_categories: tuple[str, ...] = tuple()
     if "n_glycan_subclass_label" in probe_df.columns:
@@ -1279,6 +1389,26 @@ def load_saved_probe_dataframe_bundle(
         )
         subclass_categories = tuple(dict.fromkeys(subclass_categories))
 
+    probe_target_mode = ""
+    if "probe_target_mode" in probe_df.columns:
+        mode_values = [
+            str(value).strip()
+            for value in probe_df["probe_target_mode"].dropna().tolist()
+            if str(value).strip()
+        ]
+        if mode_values:
+            probe_target_mode = mode_values[0]
+    if not probe_target_mode:
+        if probe_df[TARGET_KIND_COLUMN].eq("binary").any():
+            probe_target_mode = "n_glycan_binary"
+        else:
+            observed_labels = set(probe_df[TARGET_LABEL_COLUMN].dropna().map(str).tolist())
+            probe_target_mode = (
+                "n_glycan_structural_4class"
+                if DEFAULT_STRUCTURAL_4CLASS_OTHER_LABEL in observed_labels
+                else "n_glycan_subclass_multiclass"
+            )
+
     return {
         "annotated_probe_df": probe_df.reset_index(drop=True),
         "full_annotated_df": probe_df.reset_index(drop=True),
@@ -1287,11 +1417,7 @@ def load_saved_probe_dataframe_bundle(
         "class_summary_df": summarize_main_glycan_class_by_split(probe_df),
         "edge_case_summary_df": edge_case_summary_df,
         "edge_case_detail_df": edge_case_detail_df,
-        "probe_target_mode": (
-            "n_glycan_subclass_multiclass"
-            if probe_df[TARGET_KIND_COLUMN].eq("multiclass").any()
-            else "n_glycan_binary"
-        ),
+        "probe_target_mode": probe_target_mode,
         "probe_target_name": probe_target_name,
         "subclass_categories": subclass_categories,
     }
@@ -1368,6 +1494,12 @@ def prepare_probe_dataframe_for_notebook14(
             "subclass_probe_without_contradictions_rows_path": structural_results_dir / "structural_subclass_probe_rows_excluding_true_contradictions.csv",
             "subclass_probe_without_contradictions_edge_case_summary_path": structural_results_dir / "structural_subclass_probe_edge_case_summary_excluding_true_contradictions.csv",
             "subclass_probe_without_contradictions_edge_case_detail_path": structural_results_dir / "structural_subclass_probe_edge_case_details_excluding_true_contradictions.csv",
+            "four_class_probe_rows_path": structural_results_dir / "structural_four_class_probe_rows.csv",
+            "four_class_probe_edge_case_summary_path": structural_results_dir / "structural_four_class_probe_edge_case_summary.csv",
+            "four_class_probe_edge_case_detail_path": structural_results_dir / "structural_four_class_probe_edge_case_details.csv",
+            "four_class_probe_without_contradictions_rows_path": structural_results_dir / "structural_four_class_probe_rows_excluding_true_contradictions.csv",
+            "four_class_probe_without_contradictions_edge_case_summary_path": structural_results_dir / "structural_four_class_probe_edge_case_summary_excluding_true_contradictions.csv",
+            "four_class_probe_without_contradictions_edge_case_detail_path": structural_results_dir / "structural_four_class_probe_edge_case_details_excluding_true_contradictions.csv",
         }
 
     use_contradiction_filtered_structural_rows = (
@@ -1389,6 +1521,24 @@ def prepare_probe_dataframe_for_notebook14(
                 structural_output_paths["binary_probe_without_contradictions_edge_case_detail_path"]
                 if use_contradiction_filtered_structural_rows
                 else structural_output_paths["binary_probe_edge_case_detail_path"]
+            ),
+        )
+    elif normalized_mode == "n_glycan_structural_4class":
+        probe_bundle = load_saved_probe_dataframe_bundle(
+            probe_rows_path=(
+                structural_output_paths["four_class_probe_without_contradictions_rows_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["four_class_probe_rows_path"]
+            ),
+            edge_case_summary_path=(
+                structural_output_paths["four_class_probe_without_contradictions_edge_case_summary_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["four_class_probe_edge_case_summary_path"]
+            ),
+            edge_case_detail_path=(
+                structural_output_paths["four_class_probe_without_contradictions_edge_case_detail_path"]
+                if use_contradiction_filtered_structural_rows
+                else structural_output_paths["four_class_probe_edge_case_detail_path"]
             ),
         )
     else:
