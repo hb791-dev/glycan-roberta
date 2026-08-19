@@ -47,6 +47,7 @@ SUPPORTED_COLOR_COLUMNS = (
     "n_glycan_vs_other",
     "n_o_category",
     "main_glycan_class",
+    "n_glycan_subclass",
     "broad_branching",
 )
 
@@ -88,6 +89,13 @@ _OTHER_MAIN_CLASS_KEYWORDS = (
     "keratan",
     "hyaluron",
 )
+
+_N_GLYCAN_SUBCLASS_KEYWORDS = {
+    "High mannose": ("high mannose", "high-mannose"),
+    "Complex": ("complex n", "complex-n", "bisected"),
+    "Hybrid": ("hybrid",),
+    "Paucimannose": ("paucimannose",),
+}
 
 
 def _require_columns(dataframe: "pd.DataFrame", required_columns: Sequence[str], frame_name: str) -> None:
@@ -217,6 +225,29 @@ def infer_n_glycan_vs_other(label_values: Sequence[str]) -> str:
     return "Other"
 
 
+def infer_n_glycan_subclass(label_values: Sequence[str]) -> str:
+    """Map pure N-glycan labels to one coarse subclass when possible."""
+    if infer_n_o_category(label_values) != "N-glycan":
+        return "Not N-glycan"
+
+    normalized_labels = [_normalize_label_text(label_name) for label_name in label_values]
+    matched_subclasses = sorted(
+        {
+            subclass_name
+            for subclass_name, subclass_keywords in _N_GLYCAN_SUBCLASS_KEYWORDS.items()
+            if any(
+                any(keyword in label_name for keyword in subclass_keywords)
+                for label_name in normalized_labels
+            )
+        }
+    )
+    if len(matched_subclasses) == 1:
+        return matched_subclasses[0]
+    if len(matched_subclasses) > 1:
+        return "Ambiguous N-glycan subclass"
+    return "Unresolved N-glycan subclass"
+
+
 def count_branch_openings(sequence: str) -> int:
     """Count broad branch openings in a compact glycan sequence."""
     sequence = str(sequence)
@@ -271,6 +302,7 @@ def annotate_classification_umap_metadata(
     annotated_df["n_glycan_vs_other"] = annotated_df[LABEL_LIST_COLUMN].map(infer_n_glycan_vs_other)
     annotated_df["n_o_category"] = annotated_df[LABEL_LIST_COLUMN].map(infer_n_o_category)
     annotated_df["main_glycan_class"] = annotated_df[LABEL_LIST_COLUMN].map(infer_main_glycan_class)
+    annotated_df["n_glycan_subclass"] = annotated_df[LABEL_LIST_COLUMN].map(infer_n_glycan_subclass)
     annotated_df["branch_open_count"] = annotated_df[SEQUENCE_COLUMN].map(count_branch_openings)
     annotated_df["max_branch_depth"] = annotated_df[SEQUENCE_COLUMN].map(estimate_max_branch_depth)
     annotated_df["broad_branching"] = annotated_df[SEQUENCE_COLUMN].map(infer_broad_branching)
@@ -384,7 +416,9 @@ def build_classification_umap_output_paths(
         "neutral_plot_path": str(results_dir / "umap_neutral_highlighted.png"),
         "n_glycan_vs_other_plot_path": str(results_dir / "umap_n_glycan_vs_other.png"),
         "n_o_plot_path": str(results_dir / "umap_n_vs_o.png"),
+        "n_o_only_plot_path": str(results_dir / "umap_n_vs_o_only.png"),
         "main_class_plot_path": str(results_dir / "umap_main_glycan_class.png"),
+        "n_glycan_subclass_plot_path": str(results_dir / "umap_n_glycan_subclass.png"),
         "branching_plot_path": str(results_dir / "umap_broad_branching.png"),
     }
 
