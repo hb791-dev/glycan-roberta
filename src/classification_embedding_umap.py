@@ -381,7 +381,7 @@ def build_classification_umap_output_paths(
         "annotated_glycans_path": str(results_dir / "annotated_glycans.csv"),
         "category_summary_path": str(results_dir / "category_summary.csv"),
         "umap_coordinates_path": str(results_dir / "umap_coordinates.csv"),
-        "primary_subtype_plot_path": str(results_dir / "umap_primary_subtype.png"),
+        "neutral_plot_path": str(results_dir / "umap_neutral_highlighted.png"),
         "n_glycan_vs_other_plot_path": str(results_dir / "umap_n_glycan_vs_other.png"),
         "n_o_plot_path": str(results_dir / "umap_n_vs_o.png"),
         "main_class_plot_path": str(results_dir / "umap_main_glycan_class.png"),
@@ -486,6 +486,101 @@ def _prepare_plot_categories(
     return plot_df
 
 
+def _annotate_requested_accessions(
+    plot_df: "pd.DataFrame",
+    label_accessions: Sequence[str] | None = None,
+    accession_column: str = "glycan_id",
+    label_font_size: int = 10,
+    point_size: int | float = 18,
+) -> None:
+    """Overlay highlighted accession markers and text labels onto the current axes."""
+    requested_accessions = [str(accession).strip() for accession in (label_accessions or []) if str(accession).strip()]
+    if not requested_accessions:
+        return
+
+    _require_columns(plot_df, [accession_column, "umap_1", "umap_2"], "umap_df")
+    labeled_points_df = plot_df.loc[
+        plot_df[accession_column].map(lambda value: str(value).strip()).isin(requested_accessions)
+    ].copy()
+
+    if labeled_points_df.empty:
+        return
+
+    plt.scatter(
+        labeled_points_df["umap_1"],
+        labeled_points_df["umap_2"],
+        s=max(float(point_size) * 4.5, 85.0),
+        facecolors="none",
+        edgecolors="black",
+        linewidths=1.2,
+        zorder=5,
+    )
+    for row in labeled_points_df.itertuples(index=False):
+        accession_value = str(getattr(row, accession_column))
+        plt.annotate(
+            accession_value,
+            (float(row.umap_1), float(row.umap_2)),
+            xytext=(7, 7),
+            textcoords="offset points",
+            fontsize=label_font_size,
+            fontweight="bold",
+            color="black",
+            bbox={
+                "boxstyle": "round,pad=0.2",
+                "facecolor": "white",
+                "edgecolor": "black",
+                "alpha": 0.9,
+            },
+            zorder=6,
+        )
+
+
+def plot_umap_neutral(
+    umap_df: "pd.DataFrame",
+    output_path: str | Path,
+    title: str,
+    label_accessions: Sequence[str] | None = None,
+    accession_column: str = "glycan_id",
+    label_font_size: int = 10,
+    point_size: int | float = 18,
+    alpha: float = 0.72,
+    figure_size: tuple[int | float, int | float] = (10, 8),
+    background_color: str = "#7f8c8d",
+) -> Path:
+    """Render and save one neutral UMAP with optional highlighted accession labels."""
+    _require_columns(umap_df, ["umap_1", "umap_2"], "umap_df")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plot_df = umap_df.copy()
+    plt.figure(figsize=figure_size)
+    plt.scatter(
+        plot_df["umap_1"],
+        plot_df["umap_2"],
+        s=point_size,
+        alpha=alpha,
+        color=background_color,
+        edgecolors="none",
+    )
+    _annotate_requested_accessions(
+        plot_df=plot_df,
+        label_accessions=label_accessions,
+        accession_column=accession_column,
+        label_font_size=label_font_size,
+        point_size=point_size,
+    )
+
+    plt.title(title)
+    plt.xlabel("UMAP 1")
+    plt.ylabel("UMAP 2")
+    plt.grid(alpha=0.18)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    return output_path
+
+
 def plot_umap_by_category(
     umap_df: "pd.DataFrame",
     category_column: str,
@@ -546,41 +641,13 @@ def plot_umap_by_category(
             edgecolors="none",
         )
 
-    requested_accessions = [str(accession).strip() for accession in (label_accessions or []) if str(accession).strip()]
-    if requested_accessions:
-        _require_columns(plot_df, [accession_column], "umap_df")
-        labeled_points_df = plot_df.loc[
-            plot_df[accession_column].map(lambda value: str(value).strip()).isin(requested_accessions)
-        ].copy()
-
-        if not labeled_points_df.empty:
-            plt.scatter(
-                labeled_points_df["umap_1"],
-                labeled_points_df["umap_2"],
-                s=max(float(point_size) * 4.5, 85.0),
-                facecolors="none",
-                edgecolors="black",
-                linewidths=1.2,
-                zorder=5,
-            )
-            for row in labeled_points_df.itertuples(index=False):
-                accession_value = str(getattr(row, accession_column))
-                plt.annotate(
-                    accession_value,
-                    (float(row.umap_1), float(row.umap_2)),
-                    xytext=(7, 7),
-                    textcoords="offset points",
-                    fontsize=label_font_size,
-                    fontweight="bold",
-                    color="black",
-                    bbox={
-                        "boxstyle": "round,pad=0.2",
-                        "facecolor": "white",
-                        "edgecolor": "black",
-                        "alpha": 0.9,
-                    },
-                    zorder=6,
-                )
+    _annotate_requested_accessions(
+        plot_df=plot_df,
+        label_accessions=label_accessions,
+        accession_column=accession_column,
+        label_font_size=label_font_size,
+        point_size=point_size,
+    )
 
     plt.title(title)
     plt.xlabel("UMAP 1")
