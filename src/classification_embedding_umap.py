@@ -569,6 +569,36 @@ def _annotate_requested_accessions(
         )
 
 
+def _lock_umap_axes(
+    plot_df: "pd.DataFrame",
+    padding_fraction: float = 0.05,
+) -> None:
+    """Use one shared span for both axes so UMAP geometry is not visually stretched."""
+    _require_columns(plot_df, ["umap_1", "umap_2"], "umap_df")
+
+    x_values = plot_df["umap_1"].astype(float).to_numpy()
+    y_values = plot_df["umap_2"].astype(float).to_numpy()
+
+    x_min = float(np.min(x_values))
+    x_max = float(np.max(x_values))
+    y_min = float(np.min(y_values))
+    y_max = float(np.max(y_values))
+
+    x_center = (x_min + x_max) / 2.0
+    y_center = (y_min + y_max) / 2.0
+    shared_span = max(x_max - x_min, y_max - y_min)
+    if not np.isfinite(shared_span) or shared_span <= 0.0:
+        shared_span = 1.0
+
+    padded_half_span = (shared_span * (1.0 + max(float(padding_fraction), 0.0))) / 2.0
+    axes = plt.gca()
+    axes.set_xlim(x_center - padded_half_span, x_center + padded_half_span)
+    axes.set_ylim(y_center - padded_half_span, y_center + padded_half_span)
+    axes.set_aspect("equal", adjustable="box")
+    if hasattr(axes, "set_box_aspect"):
+        axes.set_box_aspect(1)
+
+
 def plot_umap_neutral(
     umap_df: "pd.DataFrame",
     output_path: str | Path,
@@ -604,6 +634,7 @@ def plot_umap_neutral(
         label_font_size=label_font_size,
         point_size=point_size,
     )
+    _lock_umap_axes(plot_df)
 
     plt.title(title)
     plt.xlabel("UMAP 1")
@@ -682,6 +713,7 @@ def plot_umap_by_category(
         label_font_size=label_font_size,
         point_size=point_size,
     )
+    _lock_umap_axes(plot_df)
 
     plt.title(title)
     plt.xlabel("UMAP 1")
