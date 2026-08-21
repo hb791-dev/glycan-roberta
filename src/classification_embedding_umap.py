@@ -413,6 +413,8 @@ def build_classification_umap_output_paths(
         "annotated_glycans_path": str(results_dir / "annotated_glycans.csv"),
         "category_summary_path": str(results_dir / "category_summary.csv"),
         "umap_coordinates_path": str(results_dir / "umap_coordinates.csv"),
+        "n_o_outlier_candidates_path": str(results_dir / "n_o_outlier_candidates.csv"),
+        "n_glycan_subclass_outlier_candidates_path": str(results_dir / "n_glycan_subclass_outlier_candidates.csv"),
         "neutral_plot_path": str(results_dir / "umap_neutral_highlighted.png"),
         "n_glycan_vs_other_plot_path": str(results_dir / "umap_n_glycan_vs_other.png"),
         "n_o_plot_path": str(results_dir / "umap_n_vs_o.png"),
@@ -428,6 +430,211 @@ def _to_embedding_array(embeddings) -> np.ndarray:
     if hasattr(embeddings, "detach"):
         return embeddings.detach().cpu().numpy()
     return np.asarray(embeddings, dtype=float)
+
+
+def _normalize_embedding_rows(embedding_array: np.ndarray) -> np.ndarray:
+    """L2-normalize one embedding matrix row-wise."""
+    norms = np.linalg.norm(embedding_array, axis=1, keepdims=True)
+    norms = np.where(norms > 0.0, norms, 1.0)
+    return embedding_array / norms
+
+
+def _zscore_series(values: Sequence[float]) -> np.ndarray:
+    """Return a stable z-score array, falling back to zeros for degenerate input."""
+    value_array = np.asarray(values, dtype=float)
+    if value_array.size == 0:
+        return value_array
+    mean_value = float(np.mean(value_array))
+    std_value = float(np.std(value_array))
+    if not np.isfinite(std_value) or std_value <= 0.0:
+        return np.zeros_like(value_array, dtype=float)
+    return (value_array - mean_value) / std_value
+
+
+def build_embedding_outlier_table(
+    annotated_df: "pd.DataFrame",
+    embeddings,
+    label_column: str,
+    categories_to_include: Sequence[str] | None = None,
+    accession_column: str = "glycan_id",
+    sequence_column: str = SEQUENCE_COLUMN,
+    split_column: str = SPLIT_COLUMN,
+    n_neighbors: int = 15,
+    neighbor_preview_count: int = 5,
+    cross_class_majority_threshold: float = 0.70,
+) -> "pd.DataFrame":
+    """Score accession-level embedding outliers for one label view."""
+    from sklearn.neighbors import NearestNeighbors
+
+    _require_columns(
+        annotated_df,
+        [accession_column, sequence_column, split_column, label_column, "umap_1", "umap_2"],
+        "annotated_df",
+    )
+    embedding_array = _normalize_embedding_rows(_to_embedding_array(embeddings))
+    if len(annotated_df) != len(embedding_array):
+        raise ValueError(
+            "Annotated dataframe length does not match embedding rows: "
+            f"{len(annotated_df)} vs {len(embedding_array)}."
+        )
+
+    working_df = annotated_df.reset_index(drop=True).copy()
+    working_df[label_column] = working_df[label_column].fillna("missing").map(str)
+
+    if categories_to_include:
+        included_categories = {str(category_name).strip() for category_name in categories_to_include if str(category_name).strip()}
+        row_mask = working_df[label_column].isin(included_categories).to_numpy()
+        working_df = working_df.loc[row_mask].copy().reset_index(drop=True)
+        embedding_array = embedding_array[row_mask]
+
+    if working_df.empty:
+        return pd.DataFrame()
+
+    if len(working_df) == 1:
+        single_row_df = working_df.copy()
+        single_row_df["neighbor_count_used"] = 0
+        single_row_df["mean_knn_cosine_distance"] = np.nan
+        single_row_df["same_label_neighbor_fraction"] = np.nan
+        single_row_df["other_label_neighbor_fraction"] = np.nan
+        single_row_df["neighbor_majority_label"] = ""
+        single_row_df["neighbor_majority_fraction"] = np.nan
+        single_row_df["assigned_centroid_cosine_distance"] = np.nan
+        single_row_df["nearest_other_centroid_cosine_distance"] = np.nan
+        single_row_df["centroid_margin"] = np.nan
+        single_row_df["knn_distance_zscore"] = 0.0
+        single_row_df["assigned_centroid_distance_zscore"] = 0.0
+        single_row_df["local_label_mismatch_score"] = 0.0
+        single_row_df["cross_class_outlier_flag"] = False
+        single_row_df["nearest_neighbor_accessions"] = ""
+        single_row_df["nearest_neighbor_labels"] = ""
+        single_row_df["outlier_score"] = 0.0
+        single_row_df["outlier_rank"] = 1
+        return single_row_df
+
+    resolved_neighbor_count = max(1, min(int(n_neighbors), len(working_df) - 1))
+    resolved_preview_count = max(1, min(int(neighbor_preview_count), resolved_neighbor_count))
+
+    neighbor_model = NearestNeighbors(n_neighbors=resolved_neighbor_count + 1, metric="cosine")
+    neighbor_model.fit(embedding_array)
+    neighbor_distances, neighbor_indices = neighbor_model.kneighbors(embedding_array)
+    neighbor_distances = neighbor_distances[:, 1:]
+    neighbor_indices = neighbor_indices[:, 1:]
+
+    label_values = working_df[label_column].to_numpy()
+    accession_values = working_df[accession_column].fillna("").map(str).to_numpy()
+
+    centroid_lookup: dict[str, np.ndarray] = {}
+    for category_name in sorted(pd.unique(working_df[label_column])):
+        category_mask = working_df[label_column].eq(category_name).to_numpy()
+        category_embeddings = embedding_array[category_mask]
+        category_centroid = np.mean(category_embeddings, axis=0, dtype=float)
+        centroid_lookup[str(category_name)] = _normalize_embedding_rows(category_centroid.reshape(1, -1))[0]
+
+    assigned_centroid_distances: list[float] = []
+    nearest_other_centroid_distances: list[float] = []
+    centroid_margins: list[float] = []
+    same_label_neighbor_fractions: list[float] = []
+    other_label_neighbor_fractions: list[float] = []
+    neighbor_majority_labels: list[str] = []
+    neighbor_majority_fractions: list[float] = []
+    nearest_neighbor_accessions: list[str] = []
+    nearest_neighbor_labels: list[str] = []
+
+    unique_label_names = sorted({str(label_name) for label_name in label_values.tolist()})
+
+    for row_index, row_neighbor_indices in enumerate(neighbor_indices):
+        assigned_label = str(label_values[row_index])
+        neighbor_label_values = label_values[row_neighbor_indices]
+        neighbor_accession_values = accession_values[row_neighbor_indices]
+
+        same_label_fraction = float(np.mean(neighbor_label_values == assigned_label))
+        same_label_neighbor_fractions.append(same_label_fraction)
+        other_label_neighbor_fractions.append(1.0 - same_label_fraction)
+
+        label_counts = Counter(str(label_name) for label_name in neighbor_label_values.tolist())
+        majority_label, majority_count = sorted(
+            label_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[0]
+        majority_fraction = float(majority_count / len(row_neighbor_indices))
+        neighbor_majority_labels.append(majority_label)
+        neighbor_majority_fractions.append(majority_fraction)
+
+        preview_accessions = [str(value) for value in neighbor_accession_values[:resolved_preview_count].tolist()]
+        preview_labels = [str(value) for value in neighbor_label_values[:resolved_preview_count].tolist()]
+        nearest_neighbor_accessions.append(", ".join(preview_accessions))
+        nearest_neighbor_labels.append(", ".join(preview_labels))
+
+        assigned_centroid = centroid_lookup[assigned_label]
+        assigned_centroid_distance = 1.0 - float(np.clip(np.dot(embedding_array[row_index], assigned_centroid), -1.0, 1.0))
+        assigned_centroid_distances.append(assigned_centroid_distance)
+
+        other_centroid_distances = [
+            1.0 - float(np.clip(np.dot(embedding_array[row_index], centroid_lookup[other_label]), -1.0, 1.0))
+            for other_label in unique_label_names
+            if other_label != assigned_label
+        ]
+        if other_centroid_distances:
+            nearest_other_distance = float(min(other_centroid_distances))
+            nearest_other_centroid_distances.append(nearest_other_distance)
+            centroid_margins.append(assigned_centroid_distance - nearest_other_distance)
+        else:
+            nearest_other_centroid_distances.append(np.nan)
+            centroid_margins.append(np.nan)
+
+    mean_knn_distances = np.mean(neighbor_distances, axis=1)
+    knn_distance_zscores = _zscore_series(mean_knn_distances)
+    assigned_centroid_distance_zscores = _zscore_series(assigned_centroid_distances)
+    local_label_mismatch_scores = np.asarray(other_label_neighbor_fractions, dtype=float)
+    cross_class_flags = [
+        (majority_label != str(assigned_label)) and (majority_fraction >= float(cross_class_majority_threshold))
+        for assigned_label, majority_label, majority_fraction in zip(
+            label_values.tolist(),
+            neighbor_majority_labels,
+            neighbor_majority_fractions,
+        )
+    ]
+
+    outlier_scores = (
+        knn_distance_zscores
+        + assigned_centroid_distance_zscores
+        + local_label_mismatch_scores
+        + np.asarray(
+            [majority_fraction if majority_label != str(assigned_label) else 0.0
+             for assigned_label, majority_label, majority_fraction in zip(
+                 label_values.tolist(),
+                 neighbor_majority_labels,
+                 neighbor_majority_fractions,
+             )],
+            dtype=float,
+        )
+    )
+
+    outlier_df = working_df.copy()
+    outlier_df["neighbor_count_used"] = resolved_neighbor_count
+    outlier_df["mean_knn_cosine_distance"] = mean_knn_distances
+    outlier_df["same_label_neighbor_fraction"] = same_label_neighbor_fractions
+    outlier_df["other_label_neighbor_fraction"] = other_label_neighbor_fractions
+    outlier_df["neighbor_majority_label"] = neighbor_majority_labels
+    outlier_df["neighbor_majority_fraction"] = neighbor_majority_fractions
+    outlier_df["assigned_centroid_cosine_distance"] = assigned_centroid_distances
+    outlier_df["nearest_other_centroid_cosine_distance"] = nearest_other_centroid_distances
+    outlier_df["centroid_margin"] = centroid_margins
+    outlier_df["knn_distance_zscore"] = knn_distance_zscores
+    outlier_df["assigned_centroid_distance_zscore"] = assigned_centroid_distance_zscores
+    outlier_df["local_label_mismatch_score"] = local_label_mismatch_scores
+    outlier_df["cross_class_outlier_flag"] = cross_class_flags
+    outlier_df["nearest_neighbor_accessions"] = nearest_neighbor_accessions
+    outlier_df["nearest_neighbor_labels"] = nearest_neighbor_labels
+    outlier_df["outlier_score"] = outlier_scores
+
+    outlier_df = outlier_df.sort_values(
+        by=["outlier_score", "neighbor_majority_fraction", "mean_knn_cosine_distance", accession_column],
+        ascending=[False, False, False, True],
+        kind="mergesort",
+    ).reset_index(drop=True)
+    outlier_df["outlier_rank"] = np.arange(1, len(outlier_df) + 1, dtype=int)
+    return outlier_df
 
 
 def compute_umap_projection(
@@ -570,14 +777,56 @@ def _annotate_requested_accessions(
 
 
 def _lock_umap_axes(
-    plot_df: "pd.DataFrame",
+    plot_df: "pd.DataFrame" | None = None,
+    axis_limits: tuple[float, float, float, float] | None = None,
     padding_fraction: float = 0.05,
 ) -> None:
     """Use one shared span for both axes so UMAP geometry is not visually stretched."""
-    _require_columns(plot_df, ["umap_1", "umap_2"], "umap_df")
+    if axis_limits is None:
+        if plot_df is None:
+            raise ValueError("plot_df is required when axis_limits is not provided.")
+        _require_columns(plot_df, ["umap_1", "umap_2"], "umap_df")
 
-    x_values = plot_df["umap_1"].astype(float).to_numpy()
-    y_values = plot_df["umap_2"].astype(float).to_numpy()
+        x_values = plot_df["umap_1"].astype(float).to_numpy()
+        y_values = plot_df["umap_2"].astype(float).to_numpy()
+
+        x_min = float(np.min(x_values))
+        x_max = float(np.max(x_values))
+        y_min = float(np.min(y_values))
+        y_max = float(np.max(y_values))
+
+        x_center = (x_min + x_max) / 2.0
+        y_center = (y_min + y_max) / 2.0
+        shared_span = max(x_max - x_min, y_max - y_min)
+        if not np.isfinite(shared_span) or shared_span <= 0.0:
+            shared_span = 1.0
+
+        padded_half_span = (shared_span * (1.0 + max(float(padding_fraction), 0.0))) / 2.0
+        x_limits = (x_center - padded_half_span, x_center + padded_half_span)
+        y_limits = (y_center - padded_half_span, y_center + padded_half_span)
+    else:
+        if len(axis_limits) != 4:
+            raise ValueError("axis_limits must contain exactly four values: (x_min, x_max, y_min, y_max).")
+        x_limits = (float(axis_limits[0]), float(axis_limits[1]))
+        y_limits = (float(axis_limits[2]), float(axis_limits[3]))
+
+    axes = plt.gca()
+    axes.set_xlim(*x_limits)
+    axes.set_ylim(*y_limits)
+    axes.set_aspect("equal", adjustable="box")
+    if hasattr(axes, "set_box_aspect"):
+        axes.set_box_aspect(1)
+
+
+def compute_umap_axis_limits(
+    umap_df: "pd.DataFrame",
+    padding_fraction: float = 0.05,
+) -> tuple[float, float, float, float]:
+    """Return one square UMAP window that can be reused across multiple plots."""
+    _require_columns(umap_df, ["umap_1", "umap_2"], "umap_df")
+
+    x_values = umap_df["umap_1"].astype(float).to_numpy()
+    y_values = umap_df["umap_2"].astype(float).to_numpy()
 
     x_min = float(np.min(x_values))
     x_max = float(np.max(x_values))
@@ -591,12 +840,12 @@ def _lock_umap_axes(
         shared_span = 1.0
 
     padded_half_span = (shared_span * (1.0 + max(float(padding_fraction), 0.0))) / 2.0
-    axes = plt.gca()
-    axes.set_xlim(x_center - padded_half_span, x_center + padded_half_span)
-    axes.set_ylim(y_center - padded_half_span, y_center + padded_half_span)
-    axes.set_aspect("equal", adjustable="box")
-    if hasattr(axes, "set_box_aspect"):
-        axes.set_box_aspect(1)
+    return (
+        x_center - padded_half_span,
+        x_center + padded_half_span,
+        y_center - padded_half_span,
+        y_center + padded_half_span,
+    )
 
 
 def plot_umap_neutral(
@@ -610,6 +859,7 @@ def plot_umap_neutral(
     alpha: float = 0.72,
     figure_size: tuple[int | float, int | float] = (10, 8),
     background_color: str = "#7f8c8d",
+    axis_limits: tuple[float, float, float, float] | None = None,
 ) -> Path:
     """Render and save one neutral UMAP with optional highlighted accession labels."""
     _require_columns(umap_df, ["umap_1", "umap_2"], "umap_df")
@@ -634,7 +884,7 @@ def plot_umap_neutral(
         label_font_size=label_font_size,
         point_size=point_size,
     )
-    _lock_umap_axes(plot_df)
+    _lock_umap_axes(plot_df=plot_df, axis_limits=axis_limits)
 
     plt.title(title)
     plt.xlabel("UMAP 1")
@@ -660,6 +910,7 @@ def plot_umap_by_category(
     point_size: int | float = 18,
     alpha: float = 0.82,
     figure_size: tuple[int | float, int | float] = (10, 8),
+    axis_limits: tuple[float, float, float, float] | None = None,
 ) -> Path:
     """Render and save one category-colored UMAP plot."""
     _require_columns(umap_df, ["umap_1", "umap_2", category_column], "umap_df")
@@ -713,7 +964,7 @@ def plot_umap_by_category(
         label_font_size=label_font_size,
         point_size=point_size,
     )
-    _lock_umap_axes(plot_df)
+    _lock_umap_axes(plot_df=plot_df, axis_limits=axis_limits)
 
     plt.title(title)
     plt.xlabel("UMAP 1")
