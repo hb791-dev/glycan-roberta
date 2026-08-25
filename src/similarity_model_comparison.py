@@ -1488,7 +1488,7 @@ def render_similarity_comparison_html_report(
     top_n_neighbors: int,
     embed_images: bool = True,
 ) -> str:
-    """Render a professor-friendly HTML report for model similarity comparison."""
+    """Render a review-friendly HTML report for model similarity comparison."""
     output_path = Path(output_dir)
     html_path = output_path / "similarity_model_comparison_report.html"
 

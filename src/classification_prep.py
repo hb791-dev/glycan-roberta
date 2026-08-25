@@ -3,7 +3,7 @@
 This module keeps the accession/label joining work out of notebook 09 so the
 notebook can stay focused on configuration, interpretation, and quick displays.
 
-The downstream task described by the professor is multi-label classification:
+The downstream task in this workflow is multi-label classification:
 - sequences come from the accession-aware compact-IUPAC corpus
 - labels come from the PyGly ``classification.tsv`` export
 - only ``Source == GlycoMotif`` and ``Level == GlycanSubtype`` rows are used
@@ -110,7 +110,7 @@ def load_accession_reference_corpus(accession_reference_path: str | Path) -> "pd
 
 
 def load_filtered_classification_table(classification_tsv_path: str | Path) -> "pd.DataFrame":
-    """Load ``classification.tsv`` and keep only the professor-requested rows.
+    """Load ``classification.tsv`` and keep only the workflow-selected rows.
 
     The raw export mixes multiple label levels and sources together. For this
     task we only want GlycoMotif-backed glycan subtype labels, because that is

@@ -94,7 +94,8 @@ glycan-roberta/
 │   ├── 11_classification_evaluation.ipynb
 │   ├── 11b_classification_embedding_umap.ipynb
 │   ├── 12_glyberta_similarity_model_comparison.ipynb
-│   └── 13_pooling_metric_comparison.ipynb
+│   ├── 13_pooling_metric_comparison.ipynb
+│   └── 14_n_glycan_logistic_regression.ipynb
 ├── public_reports/
 ├── src/
 │   ├── exploration.py
@@ -632,7 +633,7 @@ Purpose:
 - run a broader full-corpus similarity analysis after the smaller manual variant review
 - load one saved checkpoint and compare the full accession-aware raw corpus against itself
 - run `all vs all` similarity across the corpus to get the background distribution
-- run `specific vs all` similarity for professor-selected glycans against the corpus
+- run `specific vs all` similarity for selected reference glycans against the corpus
 - build threshold-based similarity clouds and HTML reports for the selected glycans
 - compare alternate embedding pooling strategies by changing one notebook setting
   and saving each run under its own pooling-labeled folder
@@ -658,7 +659,7 @@ Notes:
 - this notebook uses the accession-aware raw Drive file
   `data/raw/accession_reference_corpus.csv`, so the corpus side keeps real
   glycan accessions instead of temporary test-row IDs
-- the four professor-selected GlyTouCan accessions are currently configured
+- the four reference GlyTouCan accessions are currently configured
   directly inside the notebook together with their compact IUPAC sequences, and
   they may still be external query glycans rather than members of the saved
   corpus file
@@ -684,7 +685,7 @@ Notes:
 
 Purpose:
 - build the labeled dataset for the downstream glycan classification task
-- join the accession-aware compact-IUPAC corpus to the professor's
+- join the accession-aware compact-IUPAC corpus to the reference
   `classification.tsv` file
 - keep only `Source == GlycoMotif` and `Level == GlycanSubtype` labels
 - reuse the existing train, validation, and test split assignment by exact
@@ -841,7 +842,7 @@ Purpose:
 - compare notebook-8 similarity-scaleup outputs across any set of model runs
   listed in `RUN_SPECS`
 - use the current `manual` tokenizer comparison as the default example
-- focus on the professor's question about whether embeddings produce different
+- focus on whether embeddings produce different
   similarity distributions before and after classification fine-tuning
 - compare pretrained MLM embeddings, classifier embeddings from MLM init, and
   classifier embeddings from random init for the current default run
@@ -918,6 +919,43 @@ Notes:
 - the three notebook-8 input folders should differ only by pooling rule if you
   want a controlled comparison
 - this notebook is analysis-only and does not recompute embeddings itself
+
+### `14_n_glycan_logistic_regression.ipynb`
+
+Purpose:
+- compare frozen embedding spaces with a deliberately simple downstream probe
+- ask how well each embedding space separates `N-glycan` rows from other
+  labeled glycans using logistic regression
+- support comparisons across tokenizer family, architecture, and model state
+- keep the downstream classifier simple so the comparison emphasizes the saved
+  embeddings rather than classifier capacity
+
+Main outputs:
+- `run_config.json`
+- `run_manifest.csv`
+- `skipped_runs.csv`
+- `target_summary.csv`
+- `split_metrics.csv`
+- `train_summary.csv`
+- `val_summary.csv`
+- `test_summary.csv`
+- `train_metric_grid.png`
+- `val_metric_grid.png`
+- `test_metric_grid.png`
+- per-run prediction tables under `per_run/...`
+
+Notes:
+- the reusable notebook logic lives in
+  `src/classification_embedding_logreg.py`
+- the notebook reuses notebook-09 prepared classification tables plus saved
+  pretrained or classification checkpoints from Drive
+- by default, rows with no surviving subtype labels are kept and treated as
+  valid non-`N-glycan` examples in the binary probe
+- the intended split logic is: fit the probe on `train`, use `val` to compare
+  settings such as pooling or regularization strength, and keep `test` for the
+  final locked comparison
+- this notebook is intended as a linear-separability analysis rather than a
+  replacement for notebook-10 fine-tuning
 
 ## Public HTML Sharing Workflow
 
